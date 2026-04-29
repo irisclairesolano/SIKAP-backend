@@ -35,4 +35,15 @@ return [
         ],
     ],
 
+    'supabase' => [
+        'url'              => env('SUPABASE_URL'),
+        'service_role_key' => env('SUPABASE_SERVICE_ROLE_KEY'),
+        'bucket'           => env('SUPABASE_BUCKET', 'government-ids'),
+    ],
+
+    'semaphore' => [
+        'api_key'     => env('SEMAPHORE_API_KEY'),
+        'sender_name' => env('SEMAPHORE_SENDER_NAME', 'SIKAP'),
+    ],
+
 ];

@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: sikap-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    buildOptions:
+      - name: php
+        value: "8.2-fpm"
+    healthCheckPath: /up
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: DB_HOST
+        value: your-supabase-host.supabase.co
+      - key: DB_PASSWORD
+        value: your-supabase-password
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: RESEND_API_KEY
+        value: your-resend-api-key
+      - key: SEMAPHORE_API_KEY
+        value: your-semaphore-api-key
+      - key: SUPABASE_URL
+        value: https://your-project.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        value: your-service-role-key
+
+  - type: worker
+    name: sikap-queue
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    buildOptions:
+      - name: php
+        value: "8.2-fpm"
+    startCommand: php artisan queue:work --queue=default --sleep=3 --tries=3 --memory=256
