@@ -1,0 +1,1011 @@
+================================================================
+SIKAP BACKEND — COMPLETE SWE AGENT BUILD INSTRUCTIONS
+Laravel 12 · Supabase PostgreSQL · Render · Resend · Semaphore
+================================================================
+
+PROJECT: Sorsogon Informal Workers' Kabuhayan, Application, and Posting Portal
+REPO: https://github.com/irisclairesolano/SIKAP-backend.git
+STACK: Laravel 12 (PHP 8.2), Supabase PostgreSQL 15, Resend (email), Semaphore (SMS)
+API STYLE: REST, prefix /api/v1, JSON responses, Laravel Sanctum bearer token auth
+
+================================================================
+CONTEXT & CONSTRAINTS
+================================================================
+
+- Database is already created in Supabase (all 13 tables, ENUMs, RLS, seeds). Do NOT run migrations or db:seed for these tables — Supabase schema is the source of truth.
+- Laravel migrations are only needed for: personal_access_tokens (Sanctum), jobs (queue), cache, sessions tables.
+- All DB access uses service_role key through Laravel backend. RLS blocks all direct PostgREST access.
+- Email is sent via Resend API using Laravel's native Resend mailer (MAIL_MAILER=resend). NOT SMTP.
+- SMS is sent via Semaphore Philippines API (https://api.semaphore.co/api/v4/messages).
+- Semaphore API key is NOT yet available — leave SEMAPHORE_API_KEY=<your-semaphore-api-key> as placeholder in .env.example. The SemaphoreService must be implemented but the key will be filled in later.
+- File storage is Supabase Storage (S3-compatible), accessed via Guzzle HTTP — no SDK.
+- Auth uses Laravel Sanctum bearer tokens (stateless, for mobile API).
+- No frontend — pure REST API only.
+
+================================================================
+STEP 1 — PROJECT SETUP
+================================================================
+
+Run these commands to scaffold the Laravel 12 project:
+
+    composer create-project laravel/laravel sikap-backend
+    cd sikap-backend
+    composer require laravel/sanctum
+    composer require guzzlehttp/guzzle
+    composer require resend/resend-laravel
+    php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"
+    php artisan key:generate
+
+Then run ONLY these migrations (Supabase already has the app tables):
+
+    php artisan queue:table
+    php artisan cache:table
+    php artisan session:table
+    php artisan migrate
+
+================================================================
+STEP 2 — ENVIRONMENT (.env.example)
+================================================================
+
+Create .env.example with these exact variables:
+
+    # -- App
+    APP_NAME=SIKAP
+    APP_ENV=local
+    APP_KEY=
+    APP_DEBUG=true
+    APP_URL=http://localhost:8000
+
+    # -- Database (Supabase PostgreSQL)
+    DB_CONNECTION=pgsql
+    DB_HOST=db.<your-project-ref>.supabase.co
+    DB_PORT=5432
+    DB_DATABASE=postgres
+    DB_USERNAME=postgres
+    DB_PASSWORD=<supabase-db-password>
+    DB_SSLMODE=require
+
+    # -- Supabase Storage
+    SUPABASE_URL=https://<project-ref>.supabase.co
+    SUPABASE_SERVICE_ROLE_KEY=eyJ...<service-role-jwt>
+    SUPABASE_BUCKET=government-ids
+
+    # -- Sanctum
+    SANCTUM_STATEFUL_DOMAINS=localhost,127.0.0.1
+    SESSION_DRIVER=database
+
+    # -- Resend (Email / OTP)
+    MAIL_MAILER=resend
+    RESEND_API_KEY=re_<your-resend-api-key>
+    MAIL_FROM_ADDRESS=noreply@sikap.ph
+    MAIL_FROM_NAME=SIKAP
+
+    # -- Semaphore SMS
+    SEMAPHORE_API_KEY=<your-semaphore-api-key>
+    SEMAPHORE_SENDER_NAME=SIKAP
+
+    # -- Queue / Cache
+    QUEUE_CONNECTION=database
+    CACHE_DRIVER=database
+    SESSION_DRIVER=database
+
+================================================================
+STEP 3 — CONFIG FILES
+================================================================
+
+FILE: config/database.php
+- Ensure pgsql connection block includes:
+    'sslmode' => env('DB_SSLMODE', 'require'),
+    'schema'  => 'public',
+
+FILE: config/sanctum.php
+- Set: 'expiration' => null,
+
+FILE: config/cors.php
+- Set allowed_origins:
+    'allowed_origins' => ['http://localhost:3000', 'https://sikap-admin.vercel.app', '*'],
+    'allowed_methods' => ['*'],
+    'allowed_headers' => ['*'],
+    'supports_credentials' => false,
+
+FILE: config/services.php
+- Add:
+    'supabase' => [
+        'url'              => env('SUPABASE_URL'),
+        'service_role_key' => env('SUPABASE_SERVICE_ROLE_KEY'),
+        'bucket'           => env('SUPABASE_BUCKET', 'government-ids'),
+    ],
+    'semaphore' => [
+        'api_key'     => env('SEMAPHORE_API_KEY'),
+        'sender_name' => env('SEMAPHORE_SENDER_NAME', 'SIKAP'),
+    ],
+
+================================================================
+STEP 4 — ELOQUENT MODELS
+================================================================
+
+IMPORTANT: All models use $connection = 'pgsql' and do NOT use migrations to create tables (tables already exist in Supabase). Set $timestamps = true and cast timestamps appropriately.
+
+----------------------------------------------------------------
+FILE: app/Models/User.php
+----------------------------------------------------------------
+- Extends Authenticatable
+- Uses: HasApiTokens, HasFactory
+- Table: users
+- $fillable: name, email, password, role, phone, barangay, municipality, document_url, verification_status, verification_badge, is_suspended
+- $hidden: password, remember_token
+- $casts: verification_badge => boolean, is_suspended => boolean, email_verified_at => datetime
+- Relationships:
+    workerProfile()   -> hasOne(WorkerProfile::class)
+    employerProfile() -> hasOne(EmployerProfile::class)
+    jobPosts()        -> hasMany(JobPost::class, 'employer_id')
+    applications()    -> hasMany(Application::class, 'worker_id')
+    referral()        -> hasOne(Referral::class, 'new_user_id')
+    reviewsGiven()    -> hasMany(Review::class, 'reviewer_id')
+    reviewsReceived() -> hasMany(Review::class, 'reviewee_id')
+    emailOtps()       -> hasMany(EmailOtp::class)
+
+----------------------------------------------------------------
+FILE: app/Models/EmailOtp.php
+----------------------------------------------------------------
+- Table: email_otps
+- $fillable: user_id, otp_hash, expires_at
+- $casts: expires_at => datetime
+- $timestamps: only created_at (no updated_at) — set $timestamps = false, manage created_at manually OR use CREATED_AT constant
+- Relationship: user() -> belongsTo(User::class)
+
+----------------------------------------------------------------
+FILE: app/Models/Skill.php
+----------------------------------------------------------------
+- Table: skills
+- $fillable: name, category
+- Relationship: workers() -> belongsToMany(WorkerProfile::class, 'worker_skill')
+
+----------------------------------------------------------------
+FILE: app/Models/WorkerProfile.php
+----------------------------------------------------------------
+- Table: worker_profiles
+- $fillable: user_id, bio, availability_status, reputation_score
+- Relationships:
+    user()        -> belongsTo(User::class)
+    skills()      -> belongsToMany(Skill::class, 'worker_skill')
+    experiences() -> hasMany(WorkerExperience::class)
+    references()  -> hasMany(WorkerCharacterReference::class)
+
+----------------------------------------------------------------
+FILE: app/Models/WorkerExperience.php
+----------------------------------------------------------------
+- Table: worker_experiences
+- $fillable: worker_profile_id, job_title, employer_name, duration, description
+- Relationship: workerProfile() -> belongsTo(WorkerProfile::class)
+
+----------------------------------------------------------------
+FILE: app/Models/WorkerCharacterReference.php
+----------------------------------------------------------------
+- Table: worker_character_references
+- $fillable: worker_profile_id, name, phone, relationship
+- Relationship: workerProfile() -> belongsTo(WorkerProfile::class)
+
+----------------------------------------------------------------
+FILE: app/Models/EmployerProfile.php
+----------------------------------------------------------------
+- Table: employer_profiles
+- $fillable: user_id, description, contact_info, reputation_score
+- Relationship: user() -> belongsTo(User::class)
+
+----------------------------------------------------------------
+FILE: app/Models/JobPost.php
+----------------------------------------------------------------
+- Table: job_posts
+- Uses SoftDeletes (deleted_at column exists)
+- $fillable: employer_id, reference_number, title, description, category, barangay, municipality, duration_type, compensation, slots, accepted_count, status, rating_window_expires_at
+- $casts: rating_window_expires_at => datetime, deleted_at => datetime, compensation => decimal:2
+- Relationships:
+    employer()     -> belongsTo(User::class, 'employer_id')
+    applications() -> hasMany(Application::class)
+- Boot method — auto-generate reference_number on creating:
+    $year  = date('Y');
+    $count = static::withTrashed()->whereYear('created_at', $year)->count() + 1;
+    $post->reference_number = 'SIKAP-' . $year . '-' . str_pad($count, 5, '0', STR_PAD_LEFT);
+
+----------------------------------------------------------------
+FILE: app/Models/Application.php
+----------------------------------------------------------------
+- Table: applications
+- $fillable: job_post_id, worker_id, cover_note, status, references_revealed, contact_revealed, slot_locked_at, employer_confirmed_at, applied_at, responded_at, final_agreed_price
+- $casts: references_revealed => boolean, contact_revealed => boolean, slot_locked_at => datetime, employer_confirmed_at => datetime, applied_at => datetime, responded_at => datetime, final_agreed_price => decimal:2
+- Relationships:
+    job()     -> belongsTo(JobPost::class, 'job_post_id')
+    worker()  -> belongsTo(User::class, 'worker_id')
+    reviews() -> hasMany(Review::class)
+
+----------------------------------------------------------------
+FILE: app/Models/Review.php
+----------------------------------------------------------------
+- Table: reviews
+- $timestamps: only created_at
+- $fillable: application_id, reviewer_id, reviewee_id, reviewer_role, cat1, cat2, cat3, cat4, overall_rating, comment
+- $casts: overall_rating => decimal:2
+- Relationships:
+    application() -> belongsTo(Application::class)
+    reviewer()    -> belongsTo(User::class, 'reviewer_id')
+    reviewee()    -> belongsTo(User::class, 'reviewee_id')
+
+----------------------------------------------------------------
+FILE: app/Models/Report.php
+----------------------------------------------------------------
+- Table: reports
+- $fillable: reporter_id, reportable_type, reportable_id, type, description, status, resolved_at
+- $casts: resolved_at => datetime
+- Relationship: reporter() -> belongsTo(User::class, 'reporter_id')
+
+----------------------------------------------------------------
+FILE: app/Models/Referral.php
+----------------------------------------------------------------
+- Table: referrals
+- $timestamps: only created_at
+- $fillable: new_user_id, referrer_contact, referrer_name
+- Relationship: user() -> belongsTo(User::class, 'new_user_id')
+
+================================================================
+STEP 5 — SERVICE CLASSES
+================================================================
+
+----------------------------------------------------------------
+FILE: app/Services/SemaphoreService.php
+----------------------------------------------------------------
+Methods:
+    send(string $phone, string $message): void
+
+Logic:
+- Format phone: replace leading 0 with 63 (09XXXXXXXXX -> 639XXXXXXXXX)
+- POST to https://api.semaphore.co/api/v4/messages
+- form_params: apikey, number, message, sendername
+- Use GuzzleHttp\Client
+- Wrap in try/catch — log errors, never throw (SMS failure should not break the app flow)
+
+config keys: services.semaphore.api_key, services.semaphore.sender_name
+
+SMS Templates (exact strings to use):
+    OTP:                "SIKAP verification code: {otp} (expires in 10 minutes)"
+    ID Approved:        "SIKAP: Your account has been approved! You can now use the platform."
+    ID Rejected:        "SIKAP: Your ID submission was rejected. Please upload a clearer copy."
+    ID Correction:      "SIKAP: Your ID needs correction. Please re-upload in the app."
+    Stage 2 Job Req:    "SIKAP: {employer_name} has sent you a job request for [{job_title}]. Open the app to review."
+    Stage 3 24hr:       "SIKAP: Action required. Confirm your hire for [{job_title}]. The employer may cancel after 48 hours."
+    Worker Rejected:    "SIKAP: Worker {worker_name} has rejected your hire offer for [{job_title}]."
+    Employer Cancelled: "SIKAP: Your hire for [{job_title}] has been cancelled by the employer."
+
+----------------------------------------------------------------
+FILE: app/Services/SupabaseStorageService.php
+----------------------------------------------------------------
+Methods:
+    upload(UploadedFile $file, string $path): string  — returns public URL
+
+Logic:
+- PUT to {SUPABASE_URL}/storage/v1/object/{bucket}/{path}
+- Headers: Authorization: Bearer {service_role_key}, Content-Type: {mime}, x-upsert: true
+- Body: fopen($file->getRealPath(), 'r')
+- Return: "{SUPABASE_URL}/storage/v1/object/public/{bucket}/{path}"
+- Use GuzzleHttp\Client
+
+config keys: services.supabase.url, services.supabase.service_role_key, services.supabase.bucket
+
+----------------------------------------------------------------
+FILE: app/Services/ApplicationService.php
+----------------------------------------------------------------
+Methods:
+
+    apply(User $worker, JobPost $job, ?string $coverNote): Application
+    - Guard: job->status === 'open' (else 422)
+    - Guard: applications count < 50 (else 422 'Application limit reached.')
+    - Guard: no duplicate application (else 422 'Already applied to this job.')
+    - Create Application with status=pending, applied_at=now()
+
+    sendJobRequest(Application $app): void
+    - Guard: app->status === 'pending' (else 422)
+    - Update: status=pending_negotiation, references_revealed=true
+    - SMS to worker: Stage 2 template
+
+    confirmHire(Application $app, float $price): void
+    - Guard: app->status === 'pending_negotiation' (else 422)
+    - DB::transaction with lockForUpdate:
+        - Check job->accepted_count < job->slots (else 422 'All slots are currently locked.')
+        - Update app: status=employer_confirmed, final_agreed_price, slot_locked_at=now(), employer_confirmed_at=now()
+        - job->increment('accepted_count')
+    - Dispatch SendHireReminderJob::dispatch($app)->delay(now()->addHours(24))
+
+    acceptOffer(Application $app): void
+    - Guard: app->status === 'employer_confirmed' (else 422)
+    - Update app: status=accepted, contact_revealed=true, responded_at=now()
+    - If job->accepted_count >= job->slots: job->update(['status' => 'closed_in_progress'])
+
+    rejectOffer(Application $app): void
+    - Guard: app->status === 'employer_confirmed' (else 422)
+    - DB::transaction:
+        - Update app: status=rejected, responded_at=now()
+        - job->decrement('accepted_count')
+    - SMS to employer: Worker Rejected template
+
+    withdraw(Application $app): void
+    - Guard: app->status === 'pending' (else 422 'Can only withdraw a pending application.')
+    - Update app: status=withdrawn
+
+    cancelHire(Application $app): void
+    - Guard: app->status in [employer_confirmed, pending_negotiation] (else 422)
+    - DB::transaction:
+        - If status was employer_confirmed: job->decrement('accepted_count')
+        - Update app: status=rejected, responded_at=now()
+    - SMS to worker: Employer Cancelled template
+
+    markJobComplete(JobPost $job): void
+    - Guard: job->status === 'closed_in_progress' (else 422)
+    - Update job: status=completed, rating_window_expires_at=now()->addDays(7)
+    - Update all accepted applications for this job: status=completed
+
+    flagOffline(Application $app): void
+    - Guard: app->status === 'accepted' (else 422)
+    - Update app: status=completed
+    - Check if all accepted apps for this job are completed -> markJobComplete
+
+----------------------------------------------------------------
+FILE: app/Services/ReputationService.php
+----------------------------------------------------------------
+Methods:
+    recalculate(User $user): void
+    - $avg = Review::where('reviewee_id', $user->id)->avg('overall_rating') ?? 0.00
+    - $score = round($avg, 2)
+    - user->update(['reputation_score' => $score])
+    - If role=worker: user->workerProfile?->update(['reputation_score' => $score])
+    - If role=employer: user->employerProfile?->update(['reputation_score' => $score])
+
+----------------------------------------------------------------
+FILE: app/Services/AnalyticsService.php
+----------------------------------------------------------------
+Methods:
+    all(string $from, string $to): array
+    - Returns array with keys: skill_demand, application_volume, registration_trends, skill_distribution, geographic_activity
+
+    skillDemand(string $from, string $to): array
+    SQL:
+        SELECT jp.category, COUNT(jp.id) AS total_postings
+        FROM job_posts jp
+        WHERE jp.deleted_at IS NULL AND jp.created_at BETWEEN :from AND :to
+        GROUP BY jp.category ORDER BY total_postings DESC
+
+    applicationVolume(string $from, string $to): array
+    SQL:
+        SELECT jp.id AS job_post_id, jp.reference_number, jp.title, jp.category,
+               COUNT(a.id) AS total_applications,
+               SUM(CASE WHEN a.status='pending' THEN 1 ELSE 0 END) AS pending,
+               SUM(CASE WHEN a.status='pending_negotiation' THEN 1 ELSE 0 END) AS in_negotiation,
+               SUM(CASE WHEN a.status='employer_confirmed' THEN 1 ELSE 0 END) AS confirmed,
+               SUM(CASE WHEN a.status='accepted' THEN 1 ELSE 0 END) AS accepted,
+               SUM(CASE WHEN a.status='completed' THEN 1 ELSE 0 END) AS completed,
+               SUM(CASE WHEN a.status='rejected' THEN 1 ELSE 0 END) AS rejected,
+               SUM(CASE WHEN a.status='withdrawn' THEN 1 ELSE 0 END) AS withdrawn
+        FROM job_posts jp
+        LEFT JOIN applications a ON a.job_post_id = jp.id
+        WHERE jp.deleted_at IS NULL AND jp.created_at BETWEEN :from AND :to
+        GROUP BY jp.id, jp.reference_number, jp.title, jp.category
+        ORDER BY total_applications DESC LIMIT 50
+
+    registrationTrends(string $from, string $to): array
+    SQL:
+        SELECT TO_CHAR(created_at, 'YYYY-MM') AS month, role, municipality, COUNT(id) AS registrations
+        FROM users
+        WHERE created_at BETWEEN :from AND :to
+        GROUP BY month, role, municipality
+        ORDER BY month ASC, registrations DESC
+
+    skillDistribution(): array
+    SQL:
+        SELECT s.category, s.name AS skill_name, COUNT(ws.worker_profile_id) AS worker_count
+        FROM worker_skill ws
+        JOIN skills s ON s.id = ws.skill_id
+        JOIN worker_profiles wp ON wp.id = ws.worker_profile_id
+        JOIN users u ON u.id = wp.user_id
+        WHERE u.is_suspended = FALSE AND u.verification_status = 'approved'
+        GROUP BY s.category, s.name
+        ORDER BY s.category ASC, worker_count DESC
+
+    geographicActivity(string $from, string $to): array
+    SQL:
+        SELECT jp.municipality, jp.barangay,
+               COUNT(DISTINCT jp.id) AS job_postings,
+               COUNT(a.id) AS total_applications
+        FROM job_posts jp
+        LEFT JOIN applications a ON a.job_post_id = jp.id
+        WHERE jp.deleted_at IS NULL AND jp.created_at BETWEEN :from AND :to
+        GROUP BY jp.municipality, jp.barangay
+        ORDER BY jp.municipality ASC, job_postings DESC
+
+================================================================
+STEP 6 — MIDDLEWARE
+================================================================
+
+----------------------------------------------------------------
+FILE: app/Http/Middleware/RoleMiddleware.php
+----------------------------------------------------------------
+Logic:
+    handle(Request $request, Closure $next, string ...$roles): Response
+    - abort_if(!$user, 401, 'Unauthenticated.')
+    - abort_if($user->is_suspended, 403, 'Account suspended.')
+    - abort_if(!in_array($user->role, $roles), 403, 'Access denied. Required role: ' . implode(' or ', $roles))
+    - return $next($request)
+
+Register in bootstrap/app.php (Laravel 12) as 'role' middleware alias.
+
+================================================================
+STEP 7 — MAIL
+================================================================
+
+----------------------------------------------------------------
+FILE: app/Mail/OtpMail.php
+----------------------------------------------------------------
+- Mailable class
+- Constructor receives string $otp
+- Uses Resend mailer (MAIL_MAILER=resend handles this automatically)
+- Subject: "Your SIKAP Verification Code"
+- View or Markdown: simple email showing the OTP code, valid for 10 minutes
+- From: MAIL_FROM_ADDRESS / MAIL_FROM_NAME from config
+
+----------------------------------------------------------------
+FILE: resources/views/mail/otp.blade.php
+----------------------------------------------------------------
+Simple HTML email:
+    Subject: Your SIKAP Verification Code
+    Body:
+        Hello,
+        Your SIKAP verification code is: {{ $otp }}
+        This code expires in 10 minutes.
+        If you did not register for SIKAP, please ignore this email.
+        — SIKAP Team
+
+================================================================
+STEP 8 — JOBS
+================================================================
+
+----------------------------------------------------------------
+FILE: app/Jobs/SendHireReminderJob.php
+----------------------------------------------------------------
+- Implements ShouldQueue
+- Constructor: Application $app
+- handle(): send SMS to $app->worker->phone using Stage 3 template
+- Use SemaphoreService
+
+================================================================
+STEP 9 — API RESOURCE (Privacy Transformer)
+================================================================
+
+----------------------------------------------------------------
+FILE: app/Http/Resources/ApplicationResource.php
+----------------------------------------------------------------
+toArray($request): array — transforms Application based on stage
+
+Return:
+    id, job_post_id, status, cover_note, applied_at
+    final_agreed_price: only if status in [employer_confirmed, accepted]
+    worker: {
+        id, name, barangay, reputation_score, verification_badge,
+        skills: pluck('name') from workerProfile->skills,
+        experiences: workerProfile->experiences,
+        character_references: only if references_revealed === true, else null
+        phone: only if contact_revealed === true, else null
+        email: NEVER — always null
+    }
+
+PRIVACY INVARIANTS (enforce strictly):
+    worker.email          -> NEVER disclosed
+    worker.phone          -> only when contact_revealed = true
+    character_references  -> only when references_revealed = true
+    final_agreed_price    -> only at employer_confirmed or accepted status
+    exact address         -> never, only barangay name shown
+
+================================================================
+STEP 10 — CONTROLLERS
+================================================================
+
+All controllers return JSON. Use response()->json(). No views.
+All authenticated routes use auth:sanctum middleware.
+Inject services via app() or constructor injection.
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/Auth/AuthController.php
+----------------------------------------------------------------
+
+POST /api/v1/auth/register
+Validation:
+    name: required|string|max:255
+    email: required|email|unique:users,email
+    password: required|min:8|confirmed
+    role: required|in:worker,employer
+    phone: required|string|max:20
+    barangay: required|string
+    municipality: required|string
+    referrer_contact: nullable|string|max:20
+Logic:
+    1. Create user (bcrypt password)
+    2. If referrer_contact: create Referral (encrypt referrer_contact with encrypt())
+    3. Generate 6-digit OTP (str_pad(random_int(0,999999), 6, '0', STR_PAD_LEFT))
+    4. Store EmailOtp: otp_hash=bcrypt(otp), expires_at=now()+10min
+    5. Mail::to($user->email)->send(new OtpMail($otp))
+    6. app(SemaphoreService::class)->send($user->phone, OTP template)
+    7. Return 201: {message: 'Account created. OTP sent.'}
+
+POST /api/v1/auth/verify-otp
+Validation: email: required|email, otp: required|digits:6
+Logic:
+    1. Find user by email
+    2. Find latest EmailOtp where user_id=user->id AND expires_at > now()
+    3. If not found OR !Hash::check($otp, $record->otp_hash): abort 422 'OTP expired or invalid. Request a new one.'
+    4. user->update([email_verified_at => now()])
+    5. Delete OTP record
+    6. Return 200: {message: 'Email verified. Please upload your government ID.'}
+
+POST /api/v1/auth/resend-otp
+Validation: email: required|email
+Logic:
+    1. Find user by email
+    2. Find latest OTP — if exists and created_at > now()-1min: abort 429 'Please wait before requesting a new OTP.'
+    3. Delete old OTPs for user
+    4. Generate new OTP, store, send email + SMS
+    5. Return 200: {message: 'OTP resent.'}
+
+POST /api/v1/auth/login
+Validation: email: required|email, password: required
+Logic:
+    1. Find user by email
+    2. If !user OR !Hash::check(password, user->password): abort 401 'Invalid credentials.'
+    3. If !user->email_verified_at: abort 403 'Email not verified.'
+    4. If user->is_suspended: abort 403 'Account suspended.'
+    5. Create Sanctum token: $token = $user->createToken('auth_token')->plainTextToken
+    6. Return 200: {token, token_type: 'Bearer', user: {id, name, email, role, verification_status, verification_badge}}
+
+POST /api/v1/auth/upload-id [auth:sanctum]
+Validation: id_file: required|file|mimes:jpeg,png|max:5120
+Logic:
+    1. $path = 'ids/' . $user->id . '_' . time() . '.' . $file->extension()
+    2. $url = app(SupabaseStorageService::class)->upload($file, $path)
+    3. user->update([document_url => $url, verification_status => 'pending'])
+    4. Return 200: {message: 'ID uploaded. Account is pending admin approval.'}
+
+POST /api/v1/auth/logout [auth:sanctum]
+Logic:
+    1. $request->user()->currentAccessToken()->delete()
+    2. Return 200: {message: 'Logged out.'}
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/ProfileController.php
+----------------------------------------------------------------
+
+GET /api/v1/profile [auth:sanctum]
+Logic:
+    Load user with workerProfile.skills, workerProfile.experiences, workerProfile.references, employerProfile
+    Return full profile based on role
+
+PUT /api/v1/profile [auth:sanctum]
+Validation (worker): bio, availability_status in [available,unavailable]
+Validation (employer): description, contact_info
+Logic: Update the relevant sub-profile table
+
+POST /api/v1/profile/experiences [auth:sanctum, role:worker]
+Validation: job_title: required, employer_name: nullable, duration: nullable, description: nullable
+Logic: Create WorkerExperience linked to user's workerProfile
+
+DELETE /api/v1/profile/experiences/{id} [auth:sanctum, role:worker]
+Logic: Find experience, verify it belongs to requesting user's workerProfile, delete
+
+POST /api/v1/profile/references [auth:sanctum, role:worker]
+Validation: name: required, phone: required, relationship: required
+Logic: Create WorkerCharacterReference linked to user's workerProfile
+
+DELETE /api/v1/profile/references/{id} [auth:sanctum, role:worker]
+Logic: Find reference, verify ownership, delete
+
+POST /api/v1/profile/skills [auth:sanctum, role:worker]
+Validation: skill_ids: required|array, skill_ids.*: exists:skills,id
+Logic: Sync skills on workerProfile (replace all)
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/JobController.php
+----------------------------------------------------------------
+
+GET /api/v1/jobs [auth:sanctum]
+Query params: category, barangay, municipality, status (default: open), search (title ILIKE)
+Logic:
+    - Query job_posts where deleted_at IS NULL
+    - Apply filters
+    - Paginate 15 per page
+    - Return jobs with employer name, category, location, compensation, slots, accepted_count, status
+
+GET /api/v1/jobs/{id} [auth:sanctum]
+Logic: Return single job with employer profile
+
+GET /api/v1/my-jobs [auth:sanctum]
+Logic:
+    - If role=employer: return jobs where employer_id = user->id
+    - If role=worker: return jobs via applications where worker_id = user->id
+
+POST /api/v1/jobs [auth:sanctum, role:employer]
+Validation:
+    title: required|string|max:255
+    description: required|string
+    category: required|string
+    barangay: required|string
+    municipality: required|string
+    duration_type: nullable|string
+    compensation: nullable|numeric|min:0
+    slots: required|integer|min:1|max:50
+Guard: Employer may not have more than 5 active (open or closed_in_progress) jobs at once. Abort 422 if exceeded.
+Logic: Create JobPost (reference_number auto-generated in model boot)
+
+PATCH /api/v1/jobs/{id} [auth:sanctum, role:employer]
+Guard: job must belong to requesting employer
+Guard: job status must be 'open'
+Validation: same fields as POST, all nullable
+Logic: Update allowed fields
+
+DELETE /api/v1/jobs/{id} [auth:sanctum, role:employer]
+Guard: job must belong to requesting employer
+Guard: job must have no accepted/confirmed applications
+Logic: Soft delete (set deleted_at)
+
+PATCH /api/v1/jobs/{id}/complete [auth:sanctum, role:employer]
+Guard: job must belong to requesting employer
+Logic: call ApplicationService::markJobComplete($job)
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/ApplicationController.php
+----------------------------------------------------------------
+
+GET /api/v1/my-applications [auth:sanctum, role:worker]
+Logic: Return applications for requesting worker with job info and status
+
+POST /api/v1/jobs/{id}/apply [auth:sanctum, role:worker]
+Validation: cover_note: nullable|string|max:1000
+Logic: app(ApplicationService::class)->apply($user, $job, $coverNote)
+Return 201: {message: 'Application submitted.', application_id}
+
+DELETE /api/v1/applications/{id} [auth:sanctum, role:worker]
+Logic: Find application, verify worker_id = user->id, call ApplicationService::withdraw($app)
+
+PATCH /api/v1/applications/{id}/accept [auth:sanctum, role:worker]
+Logic: Find application, verify worker_id = user->id, call ApplicationService::acceptOffer($app)
+
+PATCH /api/v1/applications/{id}/reject [auth:sanctum, role:worker]
+Logic: Find application, verify worker_id = user->id, call ApplicationService::rejectOffer($app)
+
+POST /api/v1/jobs/{id}/flag-offline [auth:sanctum, role:worker]
+Logic: Find accepted application for this job+worker, call ApplicationService::flagOffline($app)
+
+PATCH /api/v1/applications/{id}/job-request [auth:sanctum, role:employer]
+Logic: Find application, verify job->employer_id = user->id, call ApplicationService::sendJobRequest($app)
+
+PATCH /api/v1/applications/{id}/confirm [auth:sanctum, role:employer]
+Validation: price: required|numeric|min:0
+Logic: Find application, verify ownership, call ApplicationService::confirmHire($app, $price)
+
+PATCH /api/v1/applications/{id}/cancel-hire [auth:sanctum, role:employer]
+Logic: Find application, verify ownership, call ApplicationService::cancelHire($app)
+
+GET /api/v1/applications/{id}/contact [auth:sanctum, role:employer]
+Logic:
+    Find application, verify job->employer_id = user->id
+    Guard: app->contact_revealed must be true (else 403 'Contact not yet revealed.')
+    Return: {phone: $app->worker->phone}
+
+GET /api/v1/jobs/{id}/applications [auth:sanctum, role:employer]
+Logic:
+    Find job, verify employer ownership
+    Return all applications using ApplicationResource transformer
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/ReviewController.php
+----------------------------------------------------------------
+
+POST /api/v1/applications/{id}/review [auth:sanctum]
+Validation:
+    cat1: required|integer|between:1,5
+    cat2: required|integer|between:1,5
+    cat3: required|integer|between:1,5
+    cat4: required|integer|between:1,5
+    comment: nullable|string|max:1000
+Logic:
+    1. Find application
+    2. Verify app->status === 'completed' (else 422 'Job must be completed before reviewing.')
+    3. Verify job rating_window_expires_at > now() (else 422 'Rating window has closed.')
+    4. Determine reviewer_role and reviewee_id based on requesting user's role
+    5. Check no duplicate review (UNIQUE constraint — catch DB exception)
+    6. overall_rating = round(($cat1+$cat2+$cat3+$cat4)/4, 2)
+    7. Create Review
+    8. app(ReputationService::class)->recalculate($reviewee)
+    9. Return 201: {message: 'Review submitted.'}
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/ReportController.php
+----------------------------------------------------------------
+
+POST /api/v1/reports [auth:sanctum]
+Validation:
+    reportable_type: required|in:user,job_post,application
+    reportable_id: required|integer
+    type: required|in:harassment,fake_account,inappropriate_job,other
+    description: nullable|string|max:1000
+Logic:
+    1. Verify the reportable entity exists (query the appropriate table)
+    2. Create Report with reporter_id = user->id, status=open
+    3. Return 201: {message: 'Report submitted.'}
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/Admin/AdminVerificationController.php
+----------------------------------------------------------------
+
+GET /api/v1/admin/verifications [auth:sanctum, role:admin]
+Query params: status (default: pending)
+Logic: Return paginated users where verification_status = ? (exclude admins), with document_url
+
+PATCH /api/v1/admin/users/{id}/verify [auth:sanctum, role:admin]
+Validation: status: required|in:approved,rejected,correction_needed
+Logic:
+    1. Find user
+    2. Update verification_status
+    3. If approved: update verification_badge=true
+    4. SMS to user with appropriate template
+    5. Return 200: {message: 'User verification status updated.'}
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/Admin/AdminUserController.php
+----------------------------------------------------------------
+
+GET /api/v1/admin/users [auth:sanctum, role:admin]
+Query params: role, is_suspended, search (name/email ILIKE), municipality
+Logic: Paginated list of all users with profiles
+
+PATCH /api/v1/admin/users/{id} [auth:sanctum, role:admin]
+Validation: is_suspended: boolean
+Logic: Update user (primarily for suspending/unsuspending)
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/Admin/AdminReportController.php
+----------------------------------------------------------------
+
+GET /api/v1/admin/reports [auth:sanctum, role:admin]
+Query params: status (default: open), type
+Logic: Paginated reports with reporter info
+
+PATCH /api/v1/admin/reports/{id} [auth:sanctum, role:admin]
+Validation: status: required|in:resolved,dismissed
+Logic:
+    1. Update report: status, resolved_at=now()
+    2. Return 200: {message: 'Report updated.'}
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/Admin/AdminAnalyticsController.php
+----------------------------------------------------------------
+
+GET /api/v1/admin/analytics [auth:sanctum, role:admin]
+Query params: from (date, default: start of current month), to (date, default: today)
+Logic: return response()->json(app(AnalyticsService::class)->all($from, $to))
+
+----------------------------------------------------------------
+FILE: app/Http/Controllers/Admin/AdminJobController.php
+----------------------------------------------------------------
+
+PATCH /api/v1/admin/jobs/{id}/mark-complete [auth:sanctum, role:admin]
+Logic: Find job, call ApplicationService::markJobComplete($job)
+
+================================================================
+STEP 11 — ROUTES
+================================================================
+
+FILE: routes/api.php
+
+<?php
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\JobController;
+use App\Http\Controllers\ApplicationController;
+use App\Http\Controllers\ReviewController;
+use App\Http\Controllers\ReportController;
+use App\Http\Controllers\Admin\AdminVerificationController;
+use App\Http\Controllers\Admin\AdminUserController;
+use App\Http\Controllers\Admin\AdminReportController;
+use App\Http\Controllers\Admin\AdminAnalyticsController;
+use App\Http\Controllers\Admin\AdminJobController;
+
+Route::prefix('v1')->group(function () {
+
+    // Public
+    Route::post('auth/register',   [AuthController::class, 'register']);
+    Route::post('auth/verify-otp', [AuthController::class, 'verifyOtp']);
+    Route::post('auth/resend-otp', [AuthController::class, 'resendOtp']);
+    Route::post('auth/login',      [AuthController::class, 'login']);
+
+    // Authenticated
+    Route::middleware('auth:sanctum')->group(function () {
+
+        Route::post('auth/upload-id', [AuthController::class, 'uploadId']);
+        Route::post('auth/logout',    [AuthController::class, 'logout']);
+
+        // Profile
+        Route::get   ('profile',                    [ProfileController::class, 'show']);
+        Route::put   ('profile',                    [ProfileController::class, 'update']);
+        Route::post  ('profile/skills',             [ProfileController::class, 'syncSkills']);
+        Route::post  ('profile/experiences',        [ProfileController::class, 'addExperience']);
+        Route::delete('profile/experiences/{id}',   [ProfileController::class, 'removeExperience']);
+        Route::post  ('profile/references',         [ProfileController::class, 'addReference']);
+        Route::delete('profile/references/{id}',    [ProfileController::class, 'removeReference']);
+
+        // Jobs (public read)
+        Route::get('jobs',     [JobController::class, 'index']);
+        Route::get('jobs/{id}',[JobController::class, 'show']);
+        Route::get('my-jobs',  [JobController::class, 'myJobs']);
+
+        // Applications (read)
+        Route::get('my-applications', [ApplicationController::class, 'myApplications']);
+
+        // Employer only
+        Route::middleware('role:employer')->group(function () {
+            Route::post  ('jobs',                               [JobController::class, 'store']);
+            Route::patch ('jobs/{id}',                         [JobController::class, 'update']);
+            Route::delete('jobs/{id}',                         [JobController::class, 'destroy']);
+            Route::patch ('jobs/{id}/complete',                [JobController::class, 'markComplete']);
+            Route::get   ('jobs/{id}/applications',            [ApplicationController::class, 'jobApplications']);
+            Route::patch ('applications/{id}/job-request',     [ApplicationController::class, 'jobRequest']);
+            Route::patch ('applications/{id}/confirm',         [ApplicationController::class, 'confirmHire']);
+            Route::patch ('applications/{id}/cancel-hire',     [ApplicationController::class, 'cancelHire']);
+            Route::get   ('applications/{id}/contact',         [ApplicationController::class, 'getContact']);
+        });
+
+        // Worker only
+        Route::middleware('role:worker')->group(function () {
+            Route::post  ('jobs/{id}/apply',         [ApplicationController::class, 'apply']);
+            Route::delete('applications/{id}',       [ApplicationController::class, 'withdraw']);
+            Route::patch ('applications/{id}/accept',[ApplicationController::class, 'accept']);
+            Route::patch ('applications/{id}/reject',[ApplicationController::class, 'reject']);
+            Route::post  ('jobs/{id}/flag-offline',  [ApplicationController::class, 'flagOffline']);
+        });
+
+        // Reviews & Reports (any authenticated role)
+        Route::post('applications/{id}/review', [ReviewController::class, 'store']);
+        Route::post('reports',                  [ReportController::class, 'store']);
+
+        // Admin only
+        Route::middleware('role:admin')->prefix('admin')->group(function () {
+            Route::get   ('verifications',         [AdminVerificationController::class, 'index']);
+            Route::patch ('users/{id}/verify',     [AdminVerificationController::class, 'verify']);
+            Route::get   ('users',                 [AdminUserController::class, 'index']);
+            Route::patch ('users/{id}',            [AdminUserController::class, 'update']);
+            Route::get   ('reports',               [AdminReportController::class, 'index']);
+            Route::patch ('reports/{id}',          [AdminReportController::class, 'resolve']);
+            Route::patch ('jobs/{id}/mark-complete',[AdminJobController::class, 'markComplete']);
+            Route::get   ('analytics',             [AdminAnalyticsController::class, 'index']);
+        });
+    });
+});
+
+================================================================
+STEP 12 — COMPLETE FILE TREE
+================================================================
+
+sikap-backend/
+├── .env.example
+├── render.yaml
+├── routes/
+│   └── api.php
+├── config/
+│   ├── cors.php                          (modify allowed_origins)
+│   ├── sanctum.php                       (set expiration: null)
+│   ├── services.php                      (add supabase + semaphore blocks)
+│   └── database.php                      (add sslmode + schema to pgsql)
+├── app/
+│   ├── Models/
+│   │   ├── User.php
+│   │   ├── EmailOtp.php
+│   │   ├── Skill.php
+│   │   ├── WorkerProfile.php
+│   │   ├── WorkerExperience.php
+│   │   ├── WorkerCharacterReference.php
+│   │   ├── EmployerProfile.php
+│   │   ├── JobPost.php
+│   │   ├── Application.php
+│   │   ├── Review.php
+│   │   ├── Report.php
+│   │   └── Referral.php
+│   ├── Services/
+│   │   ├── SemaphoreService.php
+│   │   ├── SupabaseStorageService.php
+│   │   ├── ApplicationService.php
+│   │   ├── ReputationService.php
+│   │   └── AnalyticsService.php
+│   ├── Jobs/
+│   │   └── SendHireReminderJob.php
+│   ├── Mail/
+│   │   └── OtpMail.php
+│   ├── Http/
+│   │   ├── Middleware/
+│   │   │   └── RoleMiddleware.php
+│   │   ├── Resources/
+│   │   │   └── ApplicationResource.php
+│   │   └── Controllers/
+│   │       ├── Auth/
+│   │       │   └── AuthController.php
+│   │       ├── ProfileController.php
+│   │       ├── JobController.php
+│   │       ├── ApplicationController.php
+│   │       ├── ReviewController.php
+│   │       ├── ReportController.php
+│   │       └── Admin/
+│   │           ├── AdminVerificationController.php
+│   │           ├── AdminUserController.php
+│   │           ├── AdminReportController.php
+│   │           ├── AdminAnalyticsController.php
+│   │           └── AdminJobController.php
+├── resources/
+│   └── views/
+│       └── mail/
+│           └── otp.blade.php
+└── database/
+    └── migrations/
+        (only: personal_access_tokens, jobs, cache, sessions)
+        (DO NOT migrate app tables — already in Supabase)
+
+================================================================
+STEP 13 — RENDER DEPLOYMENT (render.yaml)
+================================================================
+
+FILE: render.yaml (place in project root)
+
+services:
+  - type: web
+    name: sikap-api
+    env: php
+    buildCommand: |
+      composer install --no-dev --optimize-autoloader
+      php artisan key:generate --force
+      php artisan config:cache
+      php artisan route:cache
+      php artisan view:cache
+      php artisan migrate --force
+    startCommand: php artisan serve --host=0.0.0.0 --port=$PORT
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+
+  - type: worker
+    name: sikap-queue
+    env: php
+    buildCommand: composer install --no-dev
+    startCommand: php artisan queue:work --queue=default --sleep=3 --tries=3
+
+================================================================
+STEP 14 — BUSINESS RULES SUMMARY (enforce in code)
+================================================================
+
+- Max 50 applications per job post
+- Max 5 active jobs (open + closed_in_progress) per employer at once
+- One application per worker per job (enforced by DB UNIQUE constraint)
+- One review per party per job (enforced by DB UNIQUE constraint)
+- Reviews only allowed within 7-day window after job completion (rating_window_expires_at)
+- Slot locking: use DB::transaction + lockForUpdate when incrementing accepted_count
+- OTP: store bcrypt hash only, delete immediately after verification, rate-limit resend to 1/min
+- Worker email: NEVER disclosed at any stage — not even to admin via API
+- Worker phone: only when contact_revealed = true (Stage 4)
+- Character references: only when references_revealed = true (Stage 2)
+- Semaphore phone format: replace leading 0 with 63
+
+================================================================
+STEP 15 — PACKAGES TO INSTALL
+================================================================
+
+    composer require laravel/sanctum
+    composer require guzzlehttp/guzzle
+    composer require resend/resend-laravel
+
+================================================================
+END OF INSTRUCTIONS
+================================================================
