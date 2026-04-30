@@ -22,3 +22,7 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Cloud deployment configs (contain sensitive credentials)
+render.yaml
+docker-compose.override.yml

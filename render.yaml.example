@@ -1,0 +1,77 @@
+services:
+  - type: web
+    name: sikap-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    buildOptions:
+      - name: php
+        value: "8.2-fpm"
+    healthCheckPath: /up
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: APP_KEY
+        generateValue: true
+      - key: APP_URL
+        value: https://your-app-name.onrender.com
+      - key: DB_HOST
+        value: your-supabase-host.supabase.co
+      - key: DB_PORT
+        value: 6543
+      - key: DB_DATABASE
+        value: postgres
+      - key: DB_USERNAME
+        value: postgres.your-project
+      - key: DB_PASSWORD
+        value: your-supabase-password
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: RESEND_API_KEY
+        value: re_your-resend-api-key
+      - key: SEMAPHORE_API_KEY
+        value: your-semaphore-api-key
+      - key: SUPABASE_URL
+        value: https://your-project.supabase.co/rest/v1/
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        value: your-supabase-service-role-key
+      - key: MAIL_MAILER
+        value: resend
+      - key: MAIL_HOST
+        value: smtp.resend.com
+      - key: MAIL_PORT
+        value: 465
+      - key: MAIL_USERNAME
+        value: resend
+      - key: MAIL_ENCRYPTION
+        value: tls
+      - key: MAIL_FROM_ADDRESS
+        value: noreply@sikap.ph
+      - key: MAIL_FROM_NAME
+        value: "SIKAP"
+      - key: SESSION_DRIVER
+        value: file
+      - key: SESSION_LIFETIME
+        value: 120
+      - key: CACHE_STORE
+        value: file
+      - key: QUEUE_CONNECTION
+        value: database
+      - key: BCRYPT_ROUNDS
+        value: 12
+      - key: LOG_CHANNEL
+        value: stack
+      - key: LOG_LEVEL
+        value: error
+
+  - type: worker
+    name: sikap-queue
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    buildOptions:
+      - name: php
+        value: "8.2-fpm"
+    startCommand: php artisan queue:work --queue=default --sleep=3 --tries=3 --memory=256 --daemon

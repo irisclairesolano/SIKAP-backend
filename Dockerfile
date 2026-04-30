@@ -1,32 +1,28 @@
-# Use multi-stage build
-FROM php:8.2-fpm as php-fpm
+# Use PHP 8.2 FPM with Nginx base
+FROM php:8.2-fpm-alpine
 
 # Set working directory
 WORKDIR /var/www/html
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apk add --no-cache \
     git \
     curl \
     zip \
     unzip \
-    locales \
-    nginx \
     supervisor \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install PHP extensions
-RUN apt-get update && apt-get install -y \
+    nginx \
     libpng-dev \
-    libonig-dev \
+    oniguruma-dev \
     libxml2-dev \
     libzip-dev \
-    libpq-dev \
-    libfreetype6-dev \
-    libjpeg62-turbo-dev \
-    libicu-dev \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install \
+    postgresql-dev \
+    freetype-dev \
+    libjpeg-turbo-dev \
+    icu-dev
+
+# Install PHP extensions
+RUN docker-php-ext-install \
     pdo \
     pdo_pgsql \
     pgsql \
@@ -37,8 +33,7 @@ RUN apt-get update && apt-get install -y \
     gd \
     zip \
     intl \
-    opcache \
-    && rm -rf /var/lib/apt/lists/*
+    opcache
 
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
@@ -47,7 +42,12 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 COPY --chown=www-data:www-data . /var/www/html
 
 # Install dependencies
-RUN composer install --no-dev --optimize-autoloader
+RUN composer install --no-dev --optimize-autoloader --no-scripts
+
+# Cache configuration
+RUN php artisan config:cache
+RUN php artisan route:cache
+RUN php artisan view:cache
 
 # Copy environment file
 COPY .env.example .env
@@ -80,7 +80,7 @@ RUN echo 'server { \
     } \
     \
     client_max_body_size 10M; \
-}' > /etc/nginx/sites-available/default
+}' > /etc/nginx/http.d/default.conf
 
 # Create supervisor config
 RUN echo '[supervisord] \
