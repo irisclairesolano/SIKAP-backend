@@ -82,19 +82,8 @@ RUN echo 'server { \
     client_max_body_size 10M; \
 }' > /etc/nginx/http.d/default.conf
 
-# Create supervisor config
-RUN echo '[supervisord] \
-nodaemon=true \
-\
-[program:php-fpm] \
-command=php-fpm \
-autostart=true \
-autorestart=true \
-\
-[program:nginx] \
-command=nginx -g "daemon off;" \
-autostart=true \
-autorestart=true' > /etc/supervisor/conf.d/supervisord.conf
+# Copy supervisor config
+COPY docker/supervisor/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Expose HTTP port
 EXPOSE 80
