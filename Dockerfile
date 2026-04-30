@@ -44,11 +44,6 @@ COPY --chown=www-data:www-data . /var/www/html
 # Install dependencies
 RUN composer install --no-dev --optimize-autoloader --no-scripts
 
-# Cache configuration
-RUN php artisan config:cache
-RUN php artisan route:cache
-RUN php artisan view:cache
-
 # Copy environment file
 COPY .env.example .env
 
@@ -82,22 +77,13 @@ RUN echo 'server { \
     client_max_body_size 10M; \
 }' > /etc/nginx/http.d/default.conf
 
-# Create supervisor config
-RUN echo '[supervisord] \
-nodaemon=true \
-\
-[program:php-fpm] \
-command=php-fpm \
-autostart=true \
-autorestart=true \
-\
-[program:nginx] \
-command=nginx -g "daemon off;" \
-autostart=true \
-autorestart=true' > /etc/supervisor/conf.d/supervisord.conf
+# Copy configs and scripts
+COPY docker/supervisor/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Expose HTTP port
 EXPOSE 80
 
-# Start both services
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Use entrypoint script
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
