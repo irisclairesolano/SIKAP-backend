@@ -13,20 +13,58 @@ services:
         value: production
       - key: APP_DEBUG
         value: false
+      - key: APP_KEY
+        generateValue: true
+      - key: APP_URL
+        value: https://sikap-api.onrender.com
       - key: DB_HOST
-        value: your-supabase-host.supabase.co
+        value: aws-1-ap-southeast-1.pooler.supabase.com
+      - key: DB_PORT
+        value: 6543
+      - key: DB_DATABASE
+        value: postgres
+      - key: DB_USERNAME
+        value: postgres.nboknfpnlskfsggybsgu
       - key: DB_PASSWORD
-        value: your-supabase-password
+        value: SIKAPSYSTEM@)@^
       - key: DB_CONNECTION
         value: pgsql
       - key: RESEND_API_KEY
-        value: your-resend-api-key
+        value: re_ge72sDfn_Nc4A3XmijsJucmibrHWUVHpQ
       - key: SEMAPHORE_API_KEY
         value: your-semaphore-api-key
       - key: SUPABASE_URL
-        value: https://your-project.supabase.co
+        value: https://nboknfpnlskfsggybsgu.supabase.co/rest/v1/
       - key: SUPABASE_SERVICE_ROLE_KEY
-        value: your-service-role-key
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ib2tuZnBubHNrZnNnZ3lic2d1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjUzOTM1MCwiZXhwIjoyMDkyMTE1MzUwfQ.cW8-U0cAVqDOcGahE5SA6MAjdtB_F-yOzrV7Rm_Wpd4
+      - key: MAIL_MAILER
+        value: resend
+      - key: MAIL_HOST
+        value: smtp.resend.com
+      - key: MAIL_PORT
+        value: 465
+      - key: MAIL_USERNAME
+        value: resend
+      - key: MAIL_ENCRYPTION
+        value: tls
+      - key: MAIL_FROM_ADDRESS
+        value: noreply@sikap.ph
+      - key: MAIL_FROM_NAME
+        value: "SIKAP"
+      - key: SESSION_DRIVER
+        value: file
+      - key: SESSION_LIFETIME
+        value: 120
+      - key: CACHE_STORE
+        value: file
+      - key: QUEUE_CONNECTION
+        value: database
+      - key: BCRYPT_ROUNDS
+        value: 12
+      - key: LOG_CHANNEL
+        value: stack
+      - key: LOG_LEVEL
+        value: error
 
   - type: worker
     name: sikap-queue
@@ -36,4 +74,4 @@ services:
     buildOptions:
       - name: php
         value: "8.2-fpm"
-    startCommand: php artisan queue:work --queue=default --sleep=3 --tries=3 --memory=256
+    startCommand: php artisan queue:work --queue=default --sleep=3 --tries=3 --memory=256 --daemon
