@@ -16,27 +16,27 @@ services:
       - key: APP_KEY
         generateValue: true
       - key: APP_URL
-        value: https://sikap-api.onrender.com
+        value: https://your-app-name.onrender.com
       - key: DB_HOST
-        value: aws-1-ap-southeast-1.pooler.supabase.com
+        value: your-supabase-host.supabase.co
       - key: DB_PORT
         value: 6543
       - key: DB_DATABASE
         value: postgres
       - key: DB_USERNAME
-        value: postgres.nboknfpnlskfsggybsgu
+        value: postgres.your-project
       - key: DB_PASSWORD
-        value: SIKAPSYSTEM@)@^
+        value: your-supabase-password
       - key: DB_CONNECTION
         value: pgsql
       - key: RESEND_API_KEY
-        value: re_ge72sDfn_Nc4A3XmijsJucmibrHWUVHpQ
+        value: re_your-resend-api-key
       - key: SEMAPHORE_API_KEY
         value: your-semaphore-api-key
       - key: SUPABASE_URL
-        value: https://nboknfpnlskfsggybsgu.supabase.co/rest/v1/
+        value: https://your-project.supabase.co/rest/v1/
       - key: SUPABASE_SERVICE_ROLE_KEY
-        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ib2tuZnBubHNrZnNnZ3lic2d1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjUzOTM1MCwiZXhwIjoyMDkyMTE1MzUwfQ.cW8-U0cAVqDOcGahE5SA6MAjdtB_F-yOzrV7Rm_Wpd4
+        value: your-supabase-service-role-key
       - key: MAIL_MAILER
         value: resend
       - key: MAIL_HOST
