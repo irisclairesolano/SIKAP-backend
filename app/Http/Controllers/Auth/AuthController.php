@@ -34,8 +34,8 @@ class AuthController extends Controller
             'password' => 'required|min:8|confirmed',
             'role' => 'required|in:worker,employer',
             'phone' => 'required|string|max:20',
-            'barangay' => 'required|string',
-            'municipality' => 'required|string',
+            'barangay' => 'required|string|exists:barangays,name',
+            'municipality' => 'required|string|exists:municipalities,name',
             'referrer_contact' => 'nullable|string|max:20'
         ]);
 

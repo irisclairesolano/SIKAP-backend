@@ -12,6 +12,7 @@ use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\AdminReportController;
 use App\Http\Controllers\Admin\AdminAnalyticsController;
 use App\Http\Controllers\Admin\AdminJobController;
+use App\Http\Controllers\LocationController;
 
 Route::prefix('v1')->group(function () {
 
@@ -20,6 +21,12 @@ Route::prefix('v1')->group(function () {
     Route::post('auth/verify-otp', [AuthController::class, 'verifyOtp']);
     Route::post('auth/resend-otp', [AuthController::class, 'resendOtp']);
     Route::post('auth/login',      [AuthController::class, 'login']);
+
+    // Location dropdowns — public, no auth required
+    Route::prefix('locations')->group(function () {
+        Route::get('municipalities', [LocationController::class, 'municipalities']);
+        Route::get('barangays', [LocationController::class, 'barangays']);
+    });
 
     // Authenticated
     Route::middleware('auth:sanctum')->group(function () {
