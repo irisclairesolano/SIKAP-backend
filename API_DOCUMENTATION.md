@@ -12,9 +12,9 @@
 
 ### **Important Security Notes:**
 - **Stage 1**: Registration → Data cached, OTP sent (no user created)
-- **Stage 2**: OTP Verification → User created in database
+- **Stage 2**: OTP Verification → User created + Token returned (no separate login needed)
 - **Stage 3**: ID Upload → Document uploaded, status = 'pending'
-- **Stage 4**: Login → Auto-approved in local, manual approval in production
+- **Stage 4**: Auto-approval → Local testing (manual approval in production)
 
 ### **Testing Features (Local Only):**
 - **Auto-approval**: Users automatically approved on first login
@@ -65,9 +65,18 @@ Content-Type: application/json
 ```json
 {
   "message": "Email verified successfully. Please upload your government ID to complete registration.",
-  "user_id": 123
+  "user_id": 123,
+  "token": "2|abc123...",
+  "user": {
+    "id": 123,
+    "name": "John Doe",
+    "email": "john@example.com",
+    "role": "worker"
+  }
 }
 ```
+
+**Note:** Token is returned immediately after OTP verification - no separate login required.
 
 ### 3. Upload Government ID (Role-Specific)
 ```http
@@ -480,37 +489,40 @@ const registerResponse = await fetch('/api/v1/auth/register', {
 // Step 2: Show OTP input modal
 // User checks email, enters OTP
 
-// Step 3: Verify OTP
+// Step 3: Verify OTP (returns token)
 const verifyResponse = await fetch('/api/v1/auth/verify-otp', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ email, otp })
 });
 
+// Store token and user data immediately
+if (verifyResponse?.token) {
+  await SecureStore.setItemAsync('auth_token', verifyResponse.token);
+  // No separate login needed!
+}
+
 // Step 4: Upload ID (Role-Specific)
 const formData = new FormData();
 formData.append('id_file', idFile);
 
 // Add selfie only for workers
-if (userRole === 'worker') {
+if (verifyResponse.user.role === 'worker') {
   formData.append('selfie_file', selfieFile);
 }
 
 const uploadResponse = await fetch('/api/v1/auth/upload-id', {
   method: 'POST',
   headers: { 
-    'Authorization': `Bearer ${token}`
+    'Authorization': `Bearer ${verifyResponse.token}`
     // Note: Don't set Content-Type with FormData
   },
   body: formData
 });
 
-// Step 5: Login
-const loginResponse = await fetch('/api/v1/auth/login', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ email, password })
-});
+// Step 5: Navigate to app (already authenticated)
+// No login needed - user is already authenticated!
+navigation.navigate('Home');
 ```
 
 ### 2. Store Token:
@@ -583,9 +595,9 @@ const removeReference = async (referenceId) => {
 
 ## 🎯 KEY POINTS FOR FRONTEND
 
-1. **Multi-stage registration**: Register → OTP → ID Upload → Login
+1. **Seamless registration**: Register → OTP → Token → ID Upload (no separate login)
 2. **Location dropdowns**: Use locations API for barangay/municipality
-3. **Token storage**: Store JWT token for authenticated requests
+3. **Token storage**: Store JWT token immediately after OTP verification
 4. **Error handling**: Handle 403 errors for incomplete registration
 5. **File upload**: Use FormData for ID upload
 6. **Role-based features**: Check user role for employer/worker features
@@ -608,6 +620,7 @@ const removeReference = async (referenceId) => {
 
 ### ✅ Enhanced Security
 - **Multi-stage registration**: No users until OTP verified
+- **Seamless authentication**: Token returned after OTP verification
 - **Auto-approval testing**: Local environment only
 - **Debug logging**: Detailed error tracking
 
