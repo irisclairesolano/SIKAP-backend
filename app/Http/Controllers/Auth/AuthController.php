@@ -43,7 +43,11 @@ class AuthController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        $user = User::create([
+        // Generate 6-digit OTP
+        $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+
+        // Store registration data temporarily with OTP
+        $registrationData = [
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
@@ -51,46 +55,30 @@ class AuthController extends Controller
             'phone' => $request->phone,
             'barangay' => $request->barangay,
             'municipality' => $request->municipality,
-            'verification_status' => 'pending'
-        ]);
+            'referrer_contact' => $request->referrer_contact,
+            'referrer_name' => $request->referrer_name,
+            'expires_at' => now()->addMinutes(30) // Registration expires in 30 mins
+        ];
 
-        // If referrer_contact: create Referral
-        if ($request->referrer_contact) {
-            Referral::create([
-                'new_user_id' => $user->id,
-                'referrer_contact' => encrypt($request->referrer_contact),
-                'referrer_name' => $request->referrer_name ?? null
-            ]);
-        }
+        // Store temporary registration data
+        cache()->put("registration_{$request->email}", $registrationData, now()->addMinutes(30));
 
-        // Generate 6-digit OTP
-        $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-
-        // Store EmailOtp
+        // Store EmailOtp (without user_id for now)
         EmailOtp::create([
-            'user_id' => $user->id,
+            'email' => $request->email, // Store email instead of user_id
             'otp_hash' => Hash::make($otp),
             'expires_at' => now()->addMinutes(10)
         ]);
 
         // Send email
         try {
-            Mail::to($user->email)->send(new OtpMail($otp));
+            Mail::to($request->email)->send(new OtpMail($otp));
         } catch (\Exception $e) {
             // Log error but continue
             \Log::error('Email sending failed: ' . $e->getMessage());
         }
 
-        // Send SMS - Disabled until Semaphore API is configured
-        // try {
-        //     $message = "SIKAP verification code: {$otp} (expires in 10 minutes)";
-        //     $this->semaphoreService->send($user->phone, $message);
-        // } catch (\Exception $e) {
-        //     // Log error but continue
-        //     \Log::error('SMS sending failed: ' . $e->getMessage());
-        // }
-
-        return response()->json(['message' => 'Account created. OTP sent.'], 201);
+        return response()->json(['message' => 'Registration initiated. Please check your email for OTP.'], 201);
     }
 
     public function verifyOtp(Request $request)
@@ -104,12 +92,14 @@ class AuthController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        $user = User::where('email', $request->email)->first();
-        if (!$user) {
-            return response()->json(['message' => 'User not found.'], 404);
+        // Check if registration data exists
+        $registrationData = cache()->get("registration_{$request->email}");
+        if (!$registrationData) {
+            return response()->json(['message' => 'Registration expired or not found. Please register again.'], 404);
         }
 
-        $otpRecord = EmailOtp::where('user_id', $user->id)
+        // Verify OTP
+        $otpRecord = EmailOtp::where('email', $request->email)
             ->where('expires_at', '>', now())
             ->latest()
             ->first();
@@ -118,10 +108,36 @@ class AuthController extends Controller
             return response()->json(['message' => 'OTP expired or invalid. Request a new one.'], 422);
         }
 
-        $user->update(['email_verified_at' => now()]);
-        $otpRecord->delete();
+        // Create the user now that OTP is verified
+        $user = User::create([
+            'name' => $registrationData['name'],
+            'email' => $registrationData['email'],
+            'password' => $registrationData['password'],
+            'role' => $registrationData['role'],
+            'phone' => $registrationData['phone'],
+            'barangay' => $registrationData['barangay'],
+            'municipality' => $registrationData['municipality'],
+            'verification_status' => 'pending',
+            'email_verified_at' => now()
+        ]);
 
-        return response()->json(['message' => 'Email verified. Please upload your government ID.']);
+        // Create referral if exists
+        if ($registrationData['referrer_contact']) {
+            Referral::create([
+                'new_user_id' => $user->id,
+                'referrer_contact' => encrypt($registrationData['referrer_contact']),
+                'referrer_name' => $registrationData['referrer_name'] ?? null
+            ]);
+        }
+
+        // Clean up
+        $otpRecord->delete();
+        cache()->forget("registration_{$request->email}");
+
+        return response()->json([
+            'message' => 'Email verified successfully. Please upload your government ID to complete registration.',
+            'user_id' => $user->id
+        ]);
     }
 
     public function resendOtp(Request $request)
@@ -134,12 +150,13 @@ class AuthController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        $user = User::where('email', $request->email)->first();
-        if (!$user) {
-            return response()->json(['message' => 'User not found.'], 404);
+        // Check if there's pending registration
+        $registrationData = cache()->get("registration_{$request->email}");
+        if (!$registrationData) {
+            return response()->json(['message' => 'Registration expired or not found. Please register again.'], 404);
         }
 
-        $latestOtp = EmailOtp::where('user_id', $user->id)
+        $latestOtp = EmailOtp::where('email', $request->email)
             ->latest()
             ->first();
 
@@ -148,23 +165,23 @@ class AuthController extends Controller
         }
 
         // Delete old OTPs
-        EmailOtp::where('user_id', $user->id)->delete();
+        EmailOtp::where('email', $request->email)->delete();
 
         // Generate new OTP
         $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 
         EmailOtp::create([
-            'user_id' => $user->id,
+            'email' => $request->email,
             'otp_hash' => Hash::make($otp),
             'expires_at' => now()->addMinutes(10)
         ]);
 
         // Send email
-        Mail::to($user->email)->send(new OtpMail($otp));
-
-        // Send SMS
-        $message = "SIKAP verification code: {$otp} (expires in 10 minutes)";
-        $this->semaphoreService->send($user->phone, $message);
+        try {
+            Mail::to($request->email)->send(new OtpMail($otp));
+        } catch (\Exception $e) {
+            \Log::error('Email sending failed: ' . $e->getMessage());
+        }
 
         return response()->json(['message' => 'OTP resent.']);
     }
@@ -188,6 +205,10 @@ class AuthController extends Controller
 
         if (!$user->email_verified_at) {
             return response()->json(['message' => 'Email not verified.'], 403);
+        }
+
+        if (!$user->document_url) {
+            return response()->json(['message' => 'ID document not uploaded. Please complete your registration.'], 403);
         }
 
         if ($user->is_suspended) {
