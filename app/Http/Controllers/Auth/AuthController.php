@@ -211,6 +211,19 @@ class AuthController extends Controller
             return response()->json(['message' => 'ID document not uploaded. Please complete your registration.'], 403);
         }
 
+        if ($user->verification_status !== 'approved') {
+            // TEMPORARY: Auto-approve for testing (REMOVE IN PRODUCTION!)
+            if (config('app.env') === 'local') {
+                $user->update([
+                    'verification_status' => 'approved',
+                    'verification_badge' => true
+                ]);
+                \Log::info("Auto-approved user {$user->email} for testing");
+            } else {
+                return response()->json(['message' => 'Account pending admin approval. Your ID is being reviewed.'], 403);
+            }
+        }
+
         if ($user->is_suspended) {
             return response()->json(['message' => 'Account suspended.'], 403);
         }
@@ -233,25 +246,109 @@ class AuthController extends Controller
 
     public function uploadId(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'id_file' => 'required|file|mimes:jpeg,png|max:5120'
-        ]);
+        try {
+            $user = $request->user();
+            
+            // Debug: Log user info
+            \Log::info('Upload ID attempt', [
+                'user_id' => $user->id,
+                'user_role' => $user->role,
+                'has_id_file' => $request->hasFile('id_file'),
+                'has_selfie_file' => $request->hasFile('selfie_file'),
+                'all_files' => array_keys($request->allFiles())
+            ]);
+            
+            // Role-specific validation
+            if ($user->role === 'worker') {
+                \Log::info('Validating worker upload - requires both files');
+                
+                // Debug file info
+                if ($request->hasFile('id_file')) {
+                    \Log::info('ID file info', [
+                        'original_name' => $request->file('id_file')->getClientOriginalName(),
+                        'mime_type' => $request->file('id_file')->getMimeType(),
+                        'size' => $request->file('id_file')->getSize(),
+                        'extension' => $request->file('id_file')->getClientOriginalExtension()
+                    ]);
+                }
+                
+                if ($request->hasFile('selfie_file')) {
+                    \Log::info('Selfie file info', [
+                        'original_name' => $request->file('selfie_file')->getClientOriginalName(),
+                        'mime_type' => $request->file('selfie_file')->getMimeType(),
+                        'size' => $request->file('selfie_file')->getSize(),
+                        'extension' => $request->file('selfie_file')->getClientOriginalExtension()
+                    ]);
+                }
+                
+                $validator = Validator::make($request->all(), [
+                    'id_file' => 'required|file|mimes:jpeg,png,jpg|max:5120',
+                    'selfie_file' => 'required|file|mimes:jpeg,png,jpg|max:5120'
+                ]);
+            } else {
+                \Log::info('Validating employer upload - requires only ID');
+                
+                // Debug file info
+                if ($request->hasFile('id_file')) {
+                    \Log::info('ID file info', [
+                        'original_name' => $request->file('id_file')->getClientOriginalName(),
+                        'mime_type' => $request->file('id_file')->getMimeType(),
+                        'size' => $request->file('id_file')->getSize(),
+                        'extension' => $request->file('id_file')->getClientOriginalExtension()
+                    ]);
+                }
+                
+                // Employers only need ID
+                $validator = Validator::make($request->all(), [
+                    'id_file' => 'required|file|mimes:jpeg,png,jpg|max:5120'
+                ]);
+            }
 
-        if ($validator->fails()) {
-            return response()->json($validator->errors(), 422);
+            if ($validator->fails()) {
+                return response()->json($validator->errors(), 422);
+            }
+
+            // Upload government ID
+            $idFile = $request->file('id_file');
+            $idPath = 'ids/' . $user->id . '_id_' . time() . '.' . $idFile->extension();
+            $idUrl = $this->supabaseStorageService->upload($idFile, $idPath);
+
+            $updateData = [
+                'document_url' => $idUrl,
+                'verification_status' => 'pending'
+            ];
+
+            // Upload selfie for workers
+            if ($user->role === 'worker') {
+                $selfieFile = $request->file('selfie_file');
+                $selfiePath = 'selfies/' . $user->id . '_selfie_' . time() . '.' . $selfieFile->extension();
+                $selfieUrl = $this->supabaseStorageService->upload($selfieFile, $selfiePath);
+                $updateData['selfie_url'] = $selfieUrl;
+            }
+
+            $user->update($updateData);
+
+            $message = $user->role === 'worker' 
+                ? 'ID and selfie uploaded. Account is pending admin approval.'
+                : 'ID uploaded. Account is pending admin approval.';
+
+            return response()->json(['message' => $message]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Upload ID Error', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Upload failed',
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 500);
         }
-
-        $user = $request->user();
-        $file = $request->file('id_file');
-        $path = 'ids/' . $user->id . '_' . time() . '.' . $file->extension();
-        $url = $this->supabaseStorageService->upload($file, $path);
-
-        $user->update([
-            'document_url' => $url,
-            'verification_status' => 'pending'
-        ]);
-
-        return response()->json(['message' => 'ID uploaded. Account is pending admin approval.']);
     }
 
     public function logout(Request $request)
