@@ -26,3 +26,9 @@ Thumbs.db
 # Cloud deployment configs (contain sensitive credentials)
 render.yaml
 docker-compose.override.yml
+
+# Local test files
+test_*.php
+*_test.php
+final_*.php
+tests/local/*

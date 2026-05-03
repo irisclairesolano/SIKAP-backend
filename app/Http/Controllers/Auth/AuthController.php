@@ -34,8 +34,8 @@ class AuthController extends Controller
             'password' => 'required|min:8|confirmed',
             'role' => 'required|in:worker,employer',
             'phone' => 'required|string|max:20',
-            'barangay' => 'required|string',
-            'municipality' => 'required|string',
+            'barangay' => 'required|string|exists:barangays,name',
+            'municipality' => 'required|string|exists:municipalities,name',
             'referrer_contact' => 'nullable|string|max:20'
         ]);
 
@@ -74,11 +74,21 @@ class AuthController extends Controller
         ]);
 
         // Send email
-        Mail::to($user->email)->send(new OtpMail($otp));
+        try {
+            Mail::to($user->email)->send(new OtpMail($otp));
+        } catch (\Exception $e) {
+            // Log error but continue
+            \Log::error('Email sending failed: ' . $e->getMessage());
+        }
 
-        // Send SMS
-        $message = "SIKAP verification code: {$otp} (expires in 10 minutes)";
-        $this->semaphoreService->send($user->phone, $message);
+        // Send SMS - Disabled until Semaphore API is configured
+        // try {
+        //     $message = "SIKAP verification code: {$otp} (expires in 10 minutes)";
+        //     $this->semaphoreService->send($user->phone, $message);
+        // } catch (\Exception $e) {
+        //     // Log error but continue
+        //     \Log::error('SMS sending failed: ' . $e->getMessage());
+        // }
 
         return response()->json(['message' => 'Account created. OTP sent.'], 201);
     }

@@ -97,8 +97,8 @@ class JobController extends Controller
             'title' => 'required|string|max:255',
             'description' => 'required|string',
             'category' => 'required|string',
-            'barangay' => 'required|string',
-            'municipality' => 'required|string',
+            'barangay' => 'required|string|exists:barangays,name',
+            'municipality' => 'required|string|exists:municipalities,name',
             'duration_type' => 'nullable|string',
             'compensation' => 'nullable|numeric|min:0',
             'slots' => 'required|integer|min:1|max:50'
@@ -133,8 +133,8 @@ class JobController extends Controller
             'title' => 'nullable|string|max:255',
             'description' => 'nullable|string',
             'category' => 'nullable|string',
-            'barangay' => 'nullable|string',
-            'municipality' => 'nullable|string',
+            'barangay' => 'nullable|string|exists:barangays,name',
+            'municipality' => 'nullable|string|exists:municipalities,name',
             'duration_type' => 'nullable|string',
             'compensation' => 'nullable|numeric|min:0',
             'slots' => 'nullable|integer|min:1|max:50'
