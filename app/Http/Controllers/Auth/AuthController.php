@@ -134,9 +134,19 @@ class AuthController extends Controller
         $otpRecord->delete();
         cache()->forget("registration_{$request->email}");
 
+        // After creating the user, generate a token
+        $token = $user->createToken('auth_token')->plainTextToken;
+
         return response()->json([
             'message' => 'Email verified successfully. Please upload your government ID to complete registration.',
-            'user_id' => $user->id
+            'user_id' => $user->id,
+            'token' => $token,
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
+            ]
         ]);
     }
 
