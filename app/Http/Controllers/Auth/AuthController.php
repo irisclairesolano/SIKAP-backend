@@ -211,6 +211,19 @@ class AuthController extends Controller
             return response()->json(['message' => 'ID document not uploaded. Please complete your registration.'], 403);
         }
 
+        if ($user->verification_status !== 'approved') {
+            // TEMPORARY: Auto-approve for testing (REMOVE IN PRODUCTION!)
+            if (config('app.env') === 'local') {
+                $user->update([
+                    'verification_status' => 'approved',
+                    'verification_badge' => true
+                ]);
+                \Log::info("Auto-approved user {$user->email} for testing");
+            } else {
+                return response()->json(['message' => 'Account pending admin approval. Your ID is being reviewed.'], 403);
+            }
+        }
+
         if ($user->is_suspended) {
             return response()->json(['message' => 'Account suspended.'], 403);
         }
