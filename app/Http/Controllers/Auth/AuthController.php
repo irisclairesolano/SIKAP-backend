@@ -74,11 +74,21 @@ class AuthController extends Controller
         ]);
 
         // Send email
-        Mail::to($user->email)->send(new OtpMail($otp));
+        try {
+            Mail::to($user->email)->send(new OtpMail($otp));
+        } catch (\Exception $e) {
+            // Log error but continue
+            \Log::error('Email sending failed: ' . $e->getMessage());
+        }
 
-        // Send SMS
-        $message = "SIKAP verification code: {$otp} (expires in 10 minutes)";
-        $this->semaphoreService->send($user->phone, $message);
+        // Send SMS - Disabled until Semaphore API is configured
+        // try {
+        //     $message = "SIKAP verification code: {$otp} (expires in 10 minutes)";
+        //     $this->semaphoreService->send($user->phone, $message);
+        // } catch (\Exception $e) {
+        //     // Log error but continue
+        //     \Log::error('SMS sending failed: ' . $e->getMessage());
+        // }
 
         return response()->json(['message' => 'Account created. OTP sent.'], 201);
     }
