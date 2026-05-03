@@ -23,6 +23,7 @@ class User extends Authenticatable
         'barangay',
         'municipality',
         'document_url',
+        'selfie_url',
         'verification_status',
         'verification_badge',
         'is_suspended'
