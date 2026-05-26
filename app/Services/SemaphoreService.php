@@ -7,18 +7,21 @@ use Illuminate\Support\Facades\Log;
 
 class SemaphoreService
 {
-    protected $client;
-    protected $apiKey;
-    protected $senderName;
+    /** @var \GuzzleHttp\Client */
+    protected \GuzzleHttp\Client $client;
+    /** @var string|null */
+    protected ?string $apiKey;
+    /** @var string */
+    protected string $senderName;
 
     public function __construct()
     {
-        $this->client = new Client();
-        $this->apiKey = config('services.semaphore.api_key');
-        $this->senderName = config('services.semaphore.sender_name', 'SIKAP');
+        $this->client = new \GuzzleHttp\Client();
+        $this->apiKey = (string) config('services.semaphore.api_key');
+        $this->senderName = (string) config('services.semaphore.sender_name', 'SIKAP');
     }
 
-    public function send(string $phone, string $message): void
+    public function send(string $phone, string $message, ?string $senderName = null): void
     {
         try {
             // Format phone: replace leading 0 with 63 (09XXXXXXXXX -> 639XXXXXXXXX)
@@ -29,7 +32,7 @@ class SemaphoreService
                     'apikey' => $this->apiKey,
                     'number' => $formattedPhone,
                     'message' => $message,
-                    'sendername' => $this->senderName,
+                    'sendername' => $senderName ?? $this->senderName,
                 ]
             ]);
 

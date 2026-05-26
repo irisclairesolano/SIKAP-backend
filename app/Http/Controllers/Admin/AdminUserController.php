@@ -41,7 +41,7 @@ class AdminUserController extends Controller
         return response()->json($users);
     }
 
-    public function update(Request $request, $id)
+    public function update(Request $request, int $id)
     {
         $user = $request->user();
         
@@ -51,7 +51,7 @@ class AdminUserController extends Controller
 
         $validator = Validator::make($request->all(), [
             'is_suspended' => 'required|boolean'
-        ]);
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);

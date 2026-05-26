@@ -39,9 +39,9 @@ class JobPost extends Model
         parent::boot();
 
         static::creating(function ($post) {
-            $year = date('Y');
-            $count = static::withTrashed()->whereYear('created_at', $year)->count() + 1;
-            $post->reference_number = 'SIKAP-' . $year . '-' . str_pad($count, 5, '0', STR_PAD_LEFT);
+            $date = date('Ymd');
+            $count = static::withTrashed()->whereDate('created_at', today())->count() + 1;
+            $post->reference_number = 'SIKAP-' . $date . '-' . str_pad($count, 4, '0', STR_PAD_LEFT);
         });
     }
 

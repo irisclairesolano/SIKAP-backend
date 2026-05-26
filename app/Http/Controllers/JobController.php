@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Validator;
 
 class JobController extends Controller
 {
-    protected $applicationService;
+    protected ApplicationService $applicationService;
 
     public function __construct(ApplicationService $applicationService)
     {
@@ -18,7 +18,7 @@ class JobController extends Controller
 
     public function index(Request $request)
     {
-        $query = JobPost::with('employer')
+        $query = JobPost::query()->with('employer')
             ->whereNull('deleted_at')
             ->where('status', $request->get('status', 'open'));
 
@@ -41,9 +41,9 @@ class JobController extends Controller
         return response()->json($jobs);
     }
 
-    public function show(Request $request, $id)
+    public function show(Request $request, int $id)
     {
-        $job = JobPost::with('employer.employerProfile')
+        $job = JobPost::query()->with('employer.employerProfile')
             ->whereNull('deleted_at')
             ->findOrFail($id);
 
@@ -55,12 +55,12 @@ class JobController extends Controller
         $user = $request->user();
 
         if ($user->role === 'employer') {
-            $jobs = JobPost::with('applications')
+            $jobs = JobPost::query()->with('applications')
                 ->where('employer_id', $user->id)
                 ->whereNull('deleted_at')
                 ->paginate(15);
         } elseif ($user->role === 'worker') {
-            $jobs = JobPost::whereHas('applications', function ($query) use ($user) {
+            $jobs = JobPost::query()->whereHas('applications', function ($query) use ($user) {
                 $query->where('worker_id', $user->id);
             })
             ->with(['applications' => function ($query) use ($user) {
@@ -78,13 +78,13 @@ class JobController extends Controller
     public function store(Request $request)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'employer') {
             return response()->json(['message' => 'Only employers can create jobs.'], 403);
         }
 
         // Guard: Employer may not have more than 5 active jobs
-        $activeJobsCount = JobPost::where('employer_id', $user->id)
+        $activeJobsCount = JobPost::query()->where('employer_id', $user->id)
             ->whereIn('status', ['open', 'closed_in_progress'])
             ->whereNull('deleted_at')
             ->count();
@@ -99,16 +99,16 @@ class JobController extends Controller
             'category' => 'required|string',
             'barangay' => 'required|string|exists:barangays,name',
             'municipality' => 'required|string|exists:municipalities,name',
-            'duration_type' => 'nullable|string',
-            'compensation' => 'nullable|numeric|min:0',
-            'slots' => 'required|integer|min:1|max:50'
-        ]);
+            'duration_type' => 'required|in:daily,project-based',
+            'compensation' => 'required|numeric|min:0',
+            'slots' => 'required|integer|min:1'
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
         }
 
-        $job = JobPost::create(array_merge(
+        $job = JobPost::query()->create(array_merge(
             $request->all(),
             ['employer_id' => $user->id, 'status' => 'open']
         ));
@@ -116,15 +116,15 @@ class JobController extends Controller
         return response()->json(['message' => 'Job created successfully.', 'job' => $job], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'employer') {
             return response()->json(['message' => 'Only employers can update jobs.'], 403);
         }
 
-        $job = JobPost::where('employer_id', $user->id)
+        $job = JobPost::query()->where('employer_id', $user->id)
             ->where('status', 'open')
             ->whereNull('deleted_at')
             ->findOrFail($id);
@@ -135,29 +135,29 @@ class JobController extends Controller
             'category' => 'nullable|string',
             'barangay' => 'nullable|string|exists:barangays,name',
             'municipality' => 'nullable|string|exists:municipalities,name',
-            'duration_type' => 'nullable|string',
+            'duration_type' => 'nullable|in:daily,project-based',
             'compensation' => 'nullable|numeric|min:0',
-            'slots' => 'nullable|integer|min:1|max:50'
-        ]);
+            'slots' => 'nullable|integer|min:1'
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
         }
 
-        $job->update($request->all());
+        $job->update($validator->validated());
 
         return response()->json(['message' => 'Job updated successfully.', 'job' => $job]);
     }
 
-    public function destroy(Request $request, $id)
+    public function destroy(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'employer') {
             return response()->json(['message' => 'Only employers can delete jobs.'], 403);
         }
 
-        $job = JobPost::where('employer_id', $user->id)
+        $job = JobPost::query()->where('employer_id', $user->id)
             ->whereNull('deleted_at')
             ->findOrFail($id);
 
@@ -171,15 +171,15 @@ class JobController extends Controller
         return response()->json(['message' => 'Job deleted successfully.']);
     }
 
-    public function markComplete(Request $request, $id)
+    public function markComplete(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'employer') {
             return response()->json(['message' => 'Only employers can mark jobs complete.'], 403);
         }
 
-        $job = JobPost::where('employer_id', $user->id)
+        $job = JobPost::query()->where('employer_id', $user->id)
             ->whereNull('deleted_at')
             ->findOrFail($id);
 

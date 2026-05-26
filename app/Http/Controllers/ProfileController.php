@@ -31,7 +31,7 @@ class ProfileController extends Controller
             $validator = Validator::make($request->all(), [
                 'bio' => 'nullable|string',
                 'availability_status' => 'nullable|in:available,unavailable'
-            ]);
+            ], [], []);
 
             if ($validator->fails()) {
                 return response()->json($validator->errors(), 422);
@@ -44,7 +44,7 @@ class ProfileController extends Controller
             $validator = Validator::make($request->all(), [
                 'description' => 'nullable|string',
                 'contact_info' => 'nullable|string'
-            ]);
+            ], [], []);
 
             if ($validator->fails()) {
                 return response()->json($validator->errors(), 422);
@@ -60,7 +60,7 @@ class ProfileController extends Controller
     public function addExperience(Request $request)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can add experiences.'], 403);
         }
@@ -70,29 +70,29 @@ class ProfileController extends Controller
             'employer_name' => 'nullable|string',
             'duration' => 'nullable|string',
             'description' => 'nullable|string'
-        ]);
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
         }
 
         $profile = $user->workerProfile ?? $user->workerProfile()->create();
-        
+
         $experience = $profile->experiences()->create($request->all());
 
         return response()->json(['message' => 'Experience added successfully.', 'experience' => $experience], 201);
     }
 
-    public function removeExperience(Request $request, $id)
+    public function removeExperience(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can remove experiences.'], 403);
         }
 
-        $experience = WorkerExperience::find($id);
-        
+        $experience = WorkerExperience::query()->find($id);
+
         if (!$experience || $experience->workerProfile->user_id !== $user->id) {
             return response()->json(['message' => 'Experience not found.'], 404);
         }
@@ -105,38 +105,38 @@ class ProfileController extends Controller
     public function addReference(Request $request)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can add references.'], 403);
         }
 
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string',
-            'phone' => 'required|string',
-            'relationship' => 'required|string'
-        ]);
+            'name' => 'required|string|max:255',
+            'phone' => 'required|string|max:20',
+            'relationship' => 'required|string|max:255'
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
         }
 
         $profile = $user->workerProfile ?? $user->workerProfile()->create();
-        
+
         $reference = $profile->references()->create($request->all());
 
         return response()->json(['message' => 'Reference added successfully.', 'reference' => $reference], 201);
     }
 
-    public function removeReference(Request $request, $id)
+    public function removeReference(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can remove references.'], 403);
         }
 
-        $reference = WorkerCharacterReference::find($id);
-        
+        $reference = WorkerCharacterReference::query()->find($id);
+
         if (!$reference || $reference->workerProfile->user_id !== $user->id) {
             return response()->json(['message' => 'Reference not found.'], 404);
         }
@@ -149,7 +149,7 @@ class ProfileController extends Controller
     public function syncSkills(Request $request)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can sync skills.'], 403);
         }
@@ -157,7 +157,7 @@ class ProfileController extends Controller
         $validator = Validator::make($request->all(), [
             'skill_ids' => 'required|array',
             'skill_ids.*' => 'exists:skills,id'
-        ]);
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);

@@ -88,20 +88,15 @@ Content-Type: multipart/form-data
 id_file: [file] // JPEG/PNG/JPG, max 5MB
 selfie_file: [file] // JPEG/PNG/JPG, max 5MB
 
-// For Employers (only ID required):
+// For Employers (both files required):
 id_file: [file] // JPEG/PNG/JPG, max 5MB
+selfie_file: [file] // JPEG/PNG/JPG, max 5MB
 ```
 
 **Response (200):**
 ```json
 {
-  "message": "ID and selfie uploaded. Account is pending admin approval."
-}
-```
-or
-```json
-{
-  "message": "ID uploaded. Account is pending admin approval."
+  "message": "Files uploaded successfully. Account is pending admin approval."
 }
 ```
 
@@ -113,7 +108,7 @@ or
 
 **Validation Rules:**
 - **Workers**: Both `id_file` and `selfie_file` required
-- **Employers**: Only `id_file` required
+- **Employers**: Both `id_file` and `selfie_file` required
 - **File types**: JPEG, PNG, JPG
 - **Max size**: 5MB per file
 - **Error handling**: 422 for validation errors, 500 for server errors
@@ -506,10 +501,8 @@ if (verifyResponse?.token) {
 const formData = new FormData();
 formData.append('id_file', idFile);
 
-// Add selfie only for workers
-if (verifyResponse.user.role === 'worker') {
-  formData.append('selfie_file', selfieFile);
-}
+// Add selfie for both workers and employers
+formData.append('selfie_file', selfieFile);
 
 const uploadResponse = await fetch('/api/v1/auth/upload-id', {
   method: 'POST',
@@ -602,7 +595,7 @@ const removeReference = async (referenceId) => {
 5. **File upload**: Use FormData for ID upload
 6. **Role-based features**: Check user role for employer/worker features
 7. **Character references**: Workers can add up to 3 references
-8. **Role-specific uploads**: Workers need ID + selfie, employers only ID
+8. **Role-specific uploads**: Workers need ID + selfie, employers need ID + selfie
 9. **File validation**: 5MB max, JPEG/PNG/JPG only
 10. **Debug support**: Local environment returns detailed error messages
 
@@ -610,7 +603,7 @@ const removeReference = async (referenceId) => {
 
 ### ✅ Role-Specific Document Upload
 - **Workers**: Government ID + Selfie required
-- **Employers**: Government ID only required
+- **Employers**: Government ID + Selfie required
 - **Storage**: Supabase Storage with organized file paths
 
 ### ✅ Character References System

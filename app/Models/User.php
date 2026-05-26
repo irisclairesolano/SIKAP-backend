@@ -26,7 +26,8 @@ class User extends Authenticatable
         'selfie_url',
         'verification_status',
         'verification_badge',
-        'is_suspended'
+        'is_suspended',
+        'reputation_score'
     ];
 
     protected $hidden = [
