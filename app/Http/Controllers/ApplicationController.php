@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Validator;
 
 class ApplicationController extends Controller
 {
-    protected $applicationService;
+    protected ApplicationService $applicationService;
 
     public function __construct(ApplicationService $applicationService)
     {
@@ -21,31 +21,31 @@ class ApplicationController extends Controller
     public function myApplications(Request $request)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can view applications.'], 403);
         }
 
-        $applications = Application::with('job.employer')
+        $applications = Application::query()->with('job.employer')
             ->where('worker_id', $user->id)
             ->paginate(15);
 
         return response()->json($applications);
     }
 
-    public function apply(Request $request, $id)
+    public function apply(Request $request, int $jobId)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can apply for jobs.'], 403);
         }
 
-        $job = JobPost::whereNull('deleted_at')->findOrFail($id);
+        $job = JobPost::query()->whereNull('deleted_at')->findOrFail($jobId);
 
         $validator = Validator::make($request->all(), [
             'cover_note' => 'nullable|string|max:1000'
-        ]);
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
@@ -59,58 +59,58 @@ class ApplicationController extends Controller
         ], 201);
     }
 
-    public function withdraw(Request $request, $id)
+    public function withdraw(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can withdraw applications.'], 403);
         }
 
-        $application = Application::where('worker_id', $user->id)->findOrFail($id);
+        $application = Application::query()->where('worker_id', $user->id)->findOrFail($id);
         $this->applicationService->withdraw($application);
 
         return response()->json(['message' => 'Application withdrawn.']);
     }
 
-    public function accept(Request $request, $id)
+    public function accept(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can accept offers.'], 403);
         }
 
-        $application = Application::where('worker_id', $user->id)->findOrFail($id);
+        $application = Application::query()->where('worker_id', $user->id)->findOrFail($id);
         $this->applicationService->acceptOffer($application);
 
         return response()->json(['message' => 'Offer accepted.']);
     }
 
-    public function reject(Request $request, $id)
+    public function reject(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can reject offers.'], 403);
         }
 
-        $application = Application::where('worker_id', $user->id)->findOrFail($id);
+        $application = Application::query()->where('worker_id', $user->id)->findOrFail($id);
         $this->applicationService->rejectOffer($application);
 
         return response()->json(['message' => 'Offer rejected.']);
     }
 
-    public function flagOffline(Request $request, $id)
+    public function flagOffline(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'worker') {
             return response()->json(['message' => 'Only workers can flag jobs as complete.'], 403);
         }
 
-        $job = JobPost::whereNull('deleted_at')->findOrFail($id);
-        $application = Application::where('worker_id', $user->id)
+        $job = JobPost::query()->whereNull('deleted_at')->findOrFail($id);
+        $application = Application::query()->where('worker_id', $user->id)
             ->where('job_post_id', $job->id)
             ->where('status', 'accepted')
             ->firstOrFail();
@@ -120,46 +120,46 @@ class ApplicationController extends Controller
         return response()->json(['message' => 'Job marked as completed offline.']);
     }
 
-    public function jobApplications(Request $request, $id)
+    public function jobApplications(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'employer') {
             return response()->json(['message' => 'Only employers can view job applications.'], 403);
         }
 
-        $job = JobPost::where('employer_id', $user->id)
+        $job = JobPost::query()->where('employer_id', $user->id)
             ->whereNull('deleted_at')
             ->findOrFail($id);
 
-        $applications = Application::with('worker.workerProfile.skills', 'worker.workerProfile.experiences', 'worker.workerProfile.references')
+        $applications = Application::query()->with('worker.workerProfile.skills', 'worker.workerProfile.experiences', 'worker.workerProfile.references')
             ->where('job_post_id', $job->id)
             ->get();
 
         return response()->json(ApplicationResource::collection($applications));
     }
 
-    public function jobRequest(Request $request, $id)
+    public function jobRequest(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'employer') {
             return response()->json(['message' => 'Only employers can send job requests.'], 403);
         }
 
-        $application = Application::whereHas('job', function ($query) use ($user) {
+        $application = Application::query()->whereHas('job', function ($query) use ($user) {
             $query->where('employer_id', $user->id);
         })->findOrFail($id);
 
-        $this->applicationService->sendJobRequest($application);
+        $this->applicationService->jobRequest($application);
 
         return response()->json(['message' => 'Job request sent.']);
     }
 
-    public function confirmHire(Request $request, $id)
+    public function confirmHire(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'employer') {
             return response()->json(['message' => 'Only employers can confirm hires.'], 403);
         }
@@ -172,7 +172,7 @@ class ApplicationController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        $application = Application::whereHas('job', function ($query) use ($user) {
+        $application = Application::query()->whereHas('job', function ($query) use ($user) {
             $query->where('employer_id', $user->id);
         })->findOrFail($id);
 
@@ -181,15 +181,15 @@ class ApplicationController extends Controller
         return response()->json(['message' => 'Hire confirmed.']);
     }
 
-    public function cancelHire(Request $request, $id)
+    public function cancelHire(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'employer') {
             return response()->json(['message' => 'Only employers can cancel hires.'], 403);
         }
 
-        $application = Application::whereHas('job', function ($query) use ($user) {
+        $application = Application::query()->whereHas('job', function ($query) use ($user) {
             $query->where('employer_id', $user->id);
         })->findOrFail($id);
 
@@ -198,15 +198,15 @@ class ApplicationController extends Controller
         return response()->json(['message' => 'Hire cancelled.']);
     }
 
-    public function getContact(Request $request, $id)
+    public function getContact(Request $request, int $id)
     {
         $user = $request->user();
-        
+
         if ($user->role !== 'employer') {
             return response()->json(['message' => 'Only employers can view contact information.'], 403);
         }
 
-        $application = Application::whereHas('job', function ($query) use ($user) {
+        $application = Application::query()->whereHas('job', function ($query) use ($user) {
             $query->where('employer_id', $user->id);
         })->findOrFail($id);
 

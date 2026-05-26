@@ -20,7 +20,7 @@ class ReportController extends Controller
             'reportable_id' => 'required|integer',
             'type' => 'required|in:harassment,fake_account,inappropriate_job,other',
             'description' => 'nullable|string|max:1000'
-        ]);
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
@@ -32,13 +32,13 @@ class ReportController extends Controller
 
         switch ($reportableType) {
             case 'user':
-                $entity = User::find($reportableId);
+                $entity = User::query()->find($reportableId);
                 break;
             case 'job_post':
-                $entity = JobPost::find($reportableId);
+                $entity = JobPost::query()->find($reportableId);
                 break;
             case 'application':
-                $entity = Application::find($reportableId);
+                $entity = Application::query()->find($reportableId);
                 break;
             default:
                 return response()->json(['message' => 'Invalid reportable type.'], 422);
@@ -48,7 +48,7 @@ class ReportController extends Controller
             return response()->json(['message' => 'Reportable entity not found.'], 404);
         }
 
-        $report = Report::create([
+        $report = Report::query()->create([
             'reporter_id' => $user->id,
             'reportable_type' => $reportableType,
             'reportable_id' => $reportableId,

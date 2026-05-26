@@ -8,10 +8,10 @@ use App\Models\User;
 use App\Jobs\SendHireReminderJob;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-
+use App\Services\SemaphoreService;
 class ApplicationService
 {
-    protected $semaphoreService;
+    protected SemaphoreService $semaphoreService;
 
     public function __construct(SemaphoreService $semaphoreService)
     {
@@ -22,20 +22,20 @@ class ApplicationService
     {
         // Guard: job->status === 'open'
         if ($job->status !== 'open') {
-            abort(422, 'Job is no longer accepting applications.');
+            abort(422, 'Job is no longer accepting applications.', []);
         }
 
         // Guard: applications count < 50
         if ($job->applications()->count() >= 50) {
-            abort(422, 'Application limit reached.');
+            abort(422, 'Application limit reached.', []);
         }
 
         // Guard: no duplicate application
         if ($job->applications()->where('worker_id', $worker->id)->exists()) {
-            abort(422, 'Already applied to this job.');
+            abort(422, 'Already applied to this job.', []);
         }
 
-        return Application::create([
+        return Application::query()->create([
             'job_post_id' => $job->id,
             'worker_id' => $worker->id,
             'cover_note' => $coverNote,
@@ -48,7 +48,7 @@ class ApplicationService
     {
         // Guard: app->status === 'pending'
         if ($app->status !== 'pending') {
-            abort(422, 'Invalid application status for job request.');
+            abort(422, 'Invalid application status for job request.', []);
         }
 
         $app->update([
@@ -58,23 +58,23 @@ class ApplicationService
 
         // SMS to worker: Stage 2 template
         $message = "SIKAP: {$app->job->employer->name} has sent you a job request for [{$app->job->title}]. Open the app to review.";
-        $this->semaphoreService->send($app->worker->phone, $message);
+        $this->semaphoreService->send((string)$app->worker->phone, (string)$message, null);
     }
 
     public function confirmHire(Application $app, float $price): void
     {
         // Guard: app->status === 'pending_negotiation'
         if ($app->status !== 'pending_negotiation') {
-            abort(422, 'Invalid application status for hire confirmation.');
+            abort(422, 'Invalid application status for hire confirmation.', []);
         }
 
         DB::transaction(function () use ($app, $price) {
             // Lock the job for update
-            $job = JobPost::lockForUpdate()->find($app->job_post_id);
-            
+            $job = JobPost::query()->lockForUpdate()->findOrFail($app->job_post_id);
+
             // Check job->accepted_count < job->slots
             if ($job->accepted_count >= $job->slots) {
-                abort(422, 'All slots are currently locked.');
+                abort(422, 'All slots are currently locked.', []);
             }
 
             $app->update([
@@ -95,7 +95,7 @@ class ApplicationService
     {
         // Guard: app->status === 'employer_confirmed'
         if ($app->status !== 'employer_confirmed') {
-            abort(422, 'Invalid application status for offer acceptance.');
+            abort(422, 'Invalid application status for offer acceptance.', []);
         }
 
         $app->update([
@@ -105,9 +105,13 @@ class ApplicationService
         ]);
 
         // Check if job should be marked as closed_in_progress
-        $job = $app->job;
+        $job = JobPost::query()->findOrFail($app->job_post_id);
+        Log::info("Checking job status for job {$job->id}. Accepted: {$job->accepted_count}, Slots: {$job->slots}", []);
+
         if ($job->accepted_count >= $job->slots) {
-            $job->update(['status' => 'closed_in_progress']);
+            $job->status = 'closed_in_progress';
+            $job->save();
+            Log::info("Job {$job->id} status updated to closed_in_progress", []);
         }
     }
 
@@ -115,7 +119,7 @@ class ApplicationService
     {
         // Guard: app->status === 'employer_confirmed'
         if ($app->status !== 'employer_confirmed') {
-            abort(422, 'Invalid application status for offer rejection.');
+            abort(422, 'Invalid application status for offer rejection.', []);
         }
 
         DB::transaction(function () use ($app) {
@@ -124,21 +128,20 @@ class ApplicationService
                 'responded_at' => now()
             ]);
 
-            $app->job->decrement('accepted_count');
+            $app->job->decrement('accepted_count', 1, []);
         });
 
         // SMS to employer: Worker Rejected template
         $message = "SIKAP: Worker {$app->worker->name} has rejected your hire offer for [{$app->job->title}].";
-        $this->semaphoreService->send($app->job->employer->phone, $message);
+        $this->semaphoreService->send((string)$app->job->employer->phone, (string)$message, null);
     }
 
     public function withdraw(Application $app): void
     {
         // Guard: app->status === 'pending'
         if ($app->status !== 'pending') {
-            abort(422, 'Can only withdraw a pending application.');
+            abort(422, 'Can only withdraw a pending application.', []);
         }
-
         $app->update(['status' => 'withdrawn']);
     }
 
@@ -146,12 +149,12 @@ class ApplicationService
     {
         // Guard: app->status in [employer_confirmed, pending_negotiation]
         if (!in_array($app->status, ['employer_confirmed', 'pending_negotiation'])) {
-            abort(422, 'Cannot cancel hire at this stage.');
+            abort(422, 'Cannot cancel hire at this stage.', []);
         }
 
         DB::transaction(function () use ($app) {
             if ($app->status === 'employer_confirmed') {
-                $app->job->decrement('accepted_count');
+                $app->job->decrement('accepted_count', 1, []);
             }
 
             $app->update([
@@ -162,14 +165,14 @@ class ApplicationService
 
         // SMS to worker: Employer Cancelled template
         $message = "SIKAP: Your hire for [{$app->job->title}] has been cancelled by the employer.";
-        $this->semaphoreService->send($app->worker->phone, $message);
+        $this->semaphoreService->send((string)$app->worker->phone, (string)$message, null);
     }
 
     public function markJobComplete(JobPost $job): void
     {
         // Guard: job->status === 'closed_in_progress'
         if ($job->status !== 'closed_in_progress') {
-            abort(422, 'Job must be in progress to be marked complete.');
+            abort(422, 'Job must be in progress to be marked complete.', []);
         }
 
         $job->update([
@@ -185,7 +188,7 @@ class ApplicationService
     {
         // Guard: app->status === 'accepted'
         if ($app->status !== 'accepted') {
-            abort(422, 'Application must be accepted to flag as completed offline.');
+            abort(422, 'Application must be accepted to flag as completed offline.', []);
         }
 
         $app->update(['status' => 'completed']);

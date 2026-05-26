@@ -31,7 +31,7 @@ class AdminReportController extends Controller
         return response()->json($reports);
     }
 
-    public function resolve(Request $request, $id)
+    public function resolve(Request $request, int $id)
     {
         $user = $request->user();
         
@@ -41,7 +41,7 @@ class AdminReportController extends Controller
 
         $validator = validator()->make($request->all(), [
             'status' => 'required|in:resolved,dismissed'
-        ]);
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);

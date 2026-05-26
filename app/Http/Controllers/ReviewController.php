@@ -10,30 +10,30 @@ use Illuminate\Support\Facades\Validator;
 
 class ReviewController extends Controller
 {
-    protected $reputationService;
+    protected ReputationService $reputationService;
 
     public function __construct(ReputationService $reputationService)
     {
         $this->reputationService = $reputationService;
     }
 
-    public function store(Request $request, $id)
+    public function store(Request $request, int $applicationId)
     {
         $user = $request->user();
 
         $validator = Validator::make($request->all(), [
-            'cat1' => 'required|integer|between:1,5',
-            'cat2' => 'required|integer|between:1,5',
-            'cat3' => 'required|integer|between:1,5',
-            'cat4' => 'required|integer|between:1,5',
-            'comment' => 'nullable|string|max:1000'
-        ]);
+            'cat1' => 'required|integer|min:1|max:5',
+            'cat2' => 'required|integer|min:1|max:5',
+            'cat3' => 'required|integer|min:1|max:5',
+            'cat4' => 'required|integer|min:1|max:5',
+            'comment' => 'nullable|string|max:500'
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
         }
 
-        $application = Application::findOrFail($id);
+        $application = Application::query()->findOrFail($applicationId);
 
         // Verify app->status === 'completed'
         if ($application->status !== 'completed') {
@@ -60,7 +60,7 @@ class ReviewController extends Controller
         try {
             $overallRating = round(($request->cat1 + $request->cat2 + $request->cat3 + $request->cat4) / 4, 2);
 
-            $review = Review::create([
+            $review = Review::query()->create([
                 'application_id' => $application->id,
                 'reviewer_id' => $user->id,
                 'reviewee_id' => $revieweeId,
@@ -74,8 +74,10 @@ class ReviewController extends Controller
             ]);
 
             // Recalculate reputation
-            $reviewee = \App\Models\User::find($revieweeId);
-            $this->reputationService->recalculate($reviewee);
+            $reviewee = \App\Models\User::query()->find($revieweeId);
+            if ($reviewee instanceof \App\Models\User) {
+                $this->reputationService->recalculate($reviewee);
+            }
 
             return response()->json(['message' => 'Review submitted.'], 201);
 

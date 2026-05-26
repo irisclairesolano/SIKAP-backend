@@ -21,6 +21,6 @@ class SendHireReminderJob implements ShouldQueue
     {
         // SMS to worker: Stage 3 template
         $message = "SIKAP: Action required. Confirm your hire for [{$this->application->job->title}]. The employer may cancel after 48 hours.";
-        $semaphoreService->send($this->application->worker->phone, $message);
+        $semaphoreService->send((string)$this->application->worker->phone, (string)$message, null);
     }
 }

@@ -30,6 +30,16 @@ class Review extends Model
         'overall_rating' => 'decimal:2'
     ];
 
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($review) {
+            $sum = (int)$review->cat1 + (int)$review->cat2 + (int)$review->cat3 + (int)$review->cat4;
+            $review->overall_rating = $sum / 4;
+        });
+    }
+
     public function application()
     {
         return $this->belongsTo(Application::class);

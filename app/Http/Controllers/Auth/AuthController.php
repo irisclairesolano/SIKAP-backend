@@ -11,16 +11,17 @@ use App\Services\SemaphoreService;
 use App\Services\SupabaseStorageService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
-    protected $semaphoreService;
-    protected $supabaseStorageService;
+    protected SemaphoreService $semaphoreService;
+    protected \App\Services\SupabaseStorageService $supabaseStorageService;
 
-    public function __construct(SemaphoreService $semaphoreService, SupabaseStorageService $supabaseStorageService)
+    public function __construct(SemaphoreService $semaphoreService, \App\Services\SupabaseStorageService $supabaseStorageService)
     {
         $this->semaphoreService = $semaphoreService;
         $this->supabaseStorageService = $supabaseStorageService;
@@ -37,7 +38,7 @@ class AuthController extends Controller
             'barangay' => 'required|string|exists:barangays,name',
             'municipality' => 'required|string|exists:municipalities,name',
             'referrer_contact' => 'nullable|string|max:20'
-        ]);
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
@@ -64,7 +65,7 @@ class AuthController extends Controller
         cache()->put("registration_{$request->email}", $registrationData, now()->addMinutes(30));
 
         // Store EmailOtp (without user_id for now)
-        EmailOtp::create([
+        EmailOtp::query()->create([
             'email' => $request->email, // Store email instead of user_id
             'otp_hash' => Hash::make($otp),
             'expires_at' => now()->addMinutes(10)
@@ -75,7 +76,7 @@ class AuthController extends Controller
             Mail::to($request->email)->send(new OtpMail($otp));
         } catch (\Exception $e) {
             // Log error but continue
-            \Log::error('Email sending failed: ' . $e->getMessage());
+            Log::error('Email sending failed: ' . $e->getMessage(), []);
         }
 
         return response()->json(['message' => 'Registration initiated. Please check your email for OTP.'], 201);
@@ -86,7 +87,7 @@ class AuthController extends Controller
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
             'otp' => 'required|digits:6'
-        ]);
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
@@ -99,7 +100,7 @@ class AuthController extends Controller
         }
 
         // Verify OTP
-        $otpRecord = EmailOtp::where('email', $request->email)
+        $otpRecord = EmailOtp::query()->where('email', $request->email)
             ->where('expires_at', '>', now())
             ->latest()
             ->first();
@@ -109,7 +110,7 @@ class AuthController extends Controller
         }
 
         // Create the user now that OTP is verified
-        $user = User::create([
+        $user = User::query()->create([
             'name' => $registrationData['name'],
             'email' => $registrationData['email'],
             'password' => $registrationData['password'],
@@ -123,7 +124,7 @@ class AuthController extends Controller
 
         // Create referral if exists
         if ($registrationData['referrer_contact']) {
-            Referral::create([
+            Referral::query()->create([
                 'new_user_id' => $user->id,
                 'referrer_contact' => encrypt($registrationData['referrer_contact']),
                 'referrer_name' => $registrationData['referrer_name'] ?? null
@@ -154,7 +155,7 @@ class AuthController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'email' => 'required|email'
-        ]);
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
@@ -166,7 +167,7 @@ class AuthController extends Controller
             return response()->json(['message' => 'Registration expired or not found. Please register again.'], 404);
         }
 
-        $latestOtp = EmailOtp::where('email', $request->email)
+        $latestOtp = EmailOtp::query()->where('email', $request->email)
             ->latest()
             ->first();
 
@@ -175,12 +176,12 @@ class AuthController extends Controller
         }
 
         // Delete old OTPs
-        EmailOtp::where('email', $request->email)->delete();
+        EmailOtp::query()->where('email', $request->email)->delete();
 
         // Generate new OTP
         $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 
-        EmailOtp::create([
+        EmailOtp::query()->create([
             'email' => $request->email,
             'otp_hash' => Hash::make($otp),
             'expires_at' => now()->addMinutes(10)
@@ -190,7 +191,7 @@ class AuthController extends Controller
         try {
             Mail::to($request->email)->send(new OtpMail($otp));
         } catch (\Exception $e) {
-            \Log::error('Email sending failed: ' . $e->getMessage());
+            Log::error('Email sending failed: ' . $e->getMessage(), []);
         }
 
         return response()->json(['message' => 'OTP resent.']);
@@ -199,15 +200,15 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'email' => 'required|email',
-            'password' => 'required'
-        ]);
+            'email' => 'required|string|email',
+            'password' => 'required|string'
+        ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
         }
 
-        $user = User::where('email', $request->email)->first();
+        $user = User::query()->where('email', $request->email)->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json(['message' => 'Invalid credentials.'], 401);
@@ -228,7 +229,7 @@ class AuthController extends Controller
                     'verification_status' => 'approved',
                     'verification_badge' => true
                 ]);
-                \Log::info("Auto-approved user {$user->email} for testing");
+                Log::info("Auto-approved user {$user->email} for testing", []);
             } else {
                 return response()->json(['message' => 'Account pending admin approval. Your ID is being reviewed.'], 403);
             }
@@ -258,61 +259,40 @@ class AuthController extends Controller
     {
         try {
             $user = $request->user();
-            
+
             // Debug: Log user info
-            \Log::info('Upload ID attempt', [
+            Log::info('Upload ID attempt', [
                 'user_id' => $user->id,
                 'user_role' => $user->role,
                 'has_id_file' => $request->hasFile('id_file'),
                 'has_selfie_file' => $request->hasFile('selfie_file'),
                 'all_files' => array_keys($request->allFiles())
             ]);
-            
-            // Role-specific validation
-            if ($user->role === 'worker') {
-                \Log::info('Validating worker upload - requires both files');
-                
-                // Debug file info
-                if ($request->hasFile('id_file')) {
-                    \Log::info('ID file info', [
-                        'original_name' => $request->file('id_file')->getClientOriginalName(),
-                        'mime_type' => $request->file('id_file')->getMimeType(),
-                        'size' => $request->file('id_file')->getSize(),
-                        'extension' => $request->file('id_file')->getClientOriginalExtension()
-                    ]);
-                }
-                
-                if ($request->hasFile('selfie_file')) {
-                    \Log::info('Selfie file info', [
-                        'original_name' => $request->file('selfie_file')->getClientOriginalName(),
-                        'mime_type' => $request->file('selfie_file')->getMimeType(),
-                        'size' => $request->file('selfie_file')->getSize(),
-                        'extension' => $request->file('selfie_file')->getClientOriginalExtension()
-                    ]);
-                }
-                
-                $validator = Validator::make($request->all(), [
-                    'id_file' => 'required|file|mimes:jpeg,png,jpg|max:5120',
-                    'selfie_file' => 'required|file|mimes:jpeg,png,jpg|max:5120'
-                ]);
-            } else {
-                \Log::info('Validating employer upload - requires only ID');
-                
-                // Debug file info
-                if ($request->hasFile('id_file')) {
-                    \Log::info('ID file info', [
-                        'original_name' => $request->file('id_file')->getClientOriginalName(),
-                        'mime_type' => $request->file('id_file')->getMimeType(),
-                        'size' => $request->file('id_file')->getSize(),
-                        'extension' => $request->file('id_file')->getClientOriginalExtension()
-                    ]);
-                }
-                
-                // Employers only need ID
-                $validator = Validator::make($request->all(), [
-                    'id_file' => 'required|file|mimes:jpeg,png,jpg|max:5120'
+
+            // Debug file info
+            if ($request->hasFile('id_file')) {
+                Log::info('ID file info', [
+                    'original_name' => $request->file('id_file')->getClientOriginalName(),
+                    'mime_type' => $request->file('id_file')->getMimeType(),
+                    'size' => $request->file('id_file')->getSize(),
+                    'extension' => $request->file('id_file')->getClientOriginalExtension()
                 ]);
             }
+
+            if ($request->hasFile('selfie_file')) {
+                Log::info('Selfie file info', [
+                    'original_name' => $request->file('selfie_file')->getClientOriginalName(),
+                    'mime_type' => $request->file('selfie_file')->getMimeType(),
+                    'size' => $request->file('selfie_file')->getSize(),
+                    'extension' => $request->file('selfie_file')->getClientOriginalExtension()
+                ]);
+            }
+
+            // Validation requires both ID and selfie for everyone
+            $validator = Validator::make($request->all(), [
+                'id_file' => 'required|file|mimes:jpeg,png,jpg|max:5120',
+                'selfie_file' => 'required|file|mimes:jpeg,png,jpg|max:5120'
+            ], [], []);
 
             if ($validator->fails()) {
                 return response()->json($validator->errors(), 422);
@@ -323,35 +303,29 @@ class AuthController extends Controller
             $idPath = 'ids/' . $user->id . '_id_' . time() . '.' . $idFile->extension();
             $idUrl = $this->supabaseStorageService->upload($idFile, $idPath);
 
+            // Upload selfie
+            $selfieFile = $request->file('selfie_file');
+            $selfiePath = 'selfies/' . $user->id . '_selfie_' . time() . '.' . $selfieFile->extension();
+            $selfieUrl = $this->supabaseStorageService->upload($selfieFile, $selfiePath);
+
             $updateData = [
                 'document_url' => $idUrl,
+                'selfie_url' => $selfieUrl,
                 'verification_status' => 'pending'
             ];
 
-            // Upload selfie for workers
-            if ($user->role === 'worker') {
-                $selfieFile = $request->file('selfie_file');
-                $selfiePath = 'selfies/' . $user->id . '_selfie_' . time() . '.' . $selfieFile->extension();
-                $selfieUrl = $this->supabaseStorageService->upload($selfieFile, $selfiePath);
-                $updateData['selfie_url'] = $selfieUrl;
-            }
-
             $user->update($updateData);
 
-            $message = $user->role === 'worker' 
-                ? 'ID and selfie uploaded. Account is pending admin approval.'
-                : 'ID uploaded. Account is pending admin approval.';
+            return response()->json(['message' => 'ID and selfie uploaded. Account is pending admin approval.']);
 
-            return response()->json(['message' => $message]);
-            
         } catch (\Exception $e) {
-            \Log::error('Upload ID Error', [
+            Log::error('Upload ID Error', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'error' => 'Upload failed',
                 'message' => $e->getMessage(),
@@ -363,7 +337,14 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()->delete();
+        /** @var \App\Models\User $user */
+        $user = $request->user();
+
+        $token = $user->currentAccessToken();
+        if ($token instanceof \Laravel\Sanctum\PersonalAccessToken) {
+            $token->delete();
+        }
+
         return response()->json(['message' => 'Logged out.']);
     }
 }

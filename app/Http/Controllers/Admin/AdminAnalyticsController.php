@@ -8,9 +8,9 @@ use Illuminate\Http\Request;
 
 class AdminAnalyticsController extends Controller
 {
-    protected $analyticsService;
+    protected \App\Services\AnalyticsService $analyticsService;
 
-    public function __construct(AnalyticsService $analyticsService)
+    public function __construct(\App\Services\AnalyticsService $analyticsService)
     {
         $this->analyticsService = $analyticsService;
     }
