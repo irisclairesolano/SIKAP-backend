@@ -11,10 +11,17 @@
 ## 📝 REGISTRATION FLOW (SECURE MULTI-STAGE)
 
 ### **Important Security Notes:**
-- **Stage 1**: Registration → Data cached, OTP sent (no user created)
-- **Stage 2**: OTP Verification → User created + Token returned (no separate login needed)
-- **Stage 3**: ID Upload → Document uploaded, status = 'pending'
-- **Stage 4**: Auto-approval → Local testing (manual approval in production)
+- **Stage 1**: Registration → User record created with `registration_status = pending_email_verification` and OTP sent
+- **Stage 2**: OTP Verification → User email verified and `registration_status = pending_id_upload`; token returned
+- **Stage 3**: ID Upload → Document uploaded, `registration_status = pending_review`
+- **Stage 4**: Admin review → `registration_status = approved` or `rejected` in production
+
+### **Registration Status Values:**
+- `pending_email_verification` — email verification required
+- `pending_id_upload` — ID upload required
+- `pending_review` — awaiting admin review
+- `approved` — full access granted
+- `rejected` — registration denied; user must contact support or re-register
 
 ### **Testing Features (Local Only):**
 - **Auto-approval**: Users automatically approved on first login
@@ -49,6 +56,8 @@ Content-Type: application/json
   "message": "Registration initiated. Please check your email for OTP."
 }
 ```
+
+If the email already exists on an incomplete registration, the endpoint will return `409` with the user's current `registration_status` and next step guidance instead of a generic duplicate-email error.
 
 ### 2. Verify OTP
 ```http

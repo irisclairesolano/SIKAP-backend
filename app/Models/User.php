@@ -25,9 +25,11 @@ class User extends Authenticatable
         'document_url',
         'selfie_url',
         'verification_status',
+        'registration_status',
         'verification_badge',
         'is_suspended',
-        'reputation_score'
+        'reputation_score',
+        'email_verified_at'
     ];
 
     protected $hidden = [
@@ -40,6 +42,27 @@ class User extends Authenticatable
         'is_suspended' => 'boolean',
         'email_verified_at' => 'datetime',
     ];
+
+    public function getRegistrationStatus(): string
+    {
+        if ($this->registration_status) {
+            return $this->registration_status;
+        }
+
+        if ($this->verification_status === 'approved') {
+            return 'approved';
+        }
+
+        if (!$this->email_verified_at) {
+            return 'pending_email_verification';
+        }
+
+        if (!$this->document_url) {
+            return 'pending_id_upload';
+        }
+
+        return 'pending_review';
+    }
 
     public function workerProfile()
     {

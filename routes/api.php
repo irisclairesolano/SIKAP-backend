@@ -29,7 +29,7 @@ Route::prefix('v1')->group(function () {
     });
 
     // Authenticated
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware(['auth:sanctum', 'registration_status'])->group(function () {
 
         Route::post('auth/upload-id', [AuthController::class, 'uploadId']);
         Route::post('auth/logout',    [AuthController::class, 'logout']);

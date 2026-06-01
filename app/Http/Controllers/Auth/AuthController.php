@@ -31,24 +31,99 @@ class AuthController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users,email',
+            'email' => 'required|email',
             'password' => 'required|min:8|confirmed',
             'role' => 'required|in:worker,employer',
             'phone' => 'required|string|max:20',
             'barangay' => 'required|string|exists:barangays,name',
             'municipality' => 'required|string|exists:municipalities,name',
-            'referrer_contact' => 'nullable|string|max:20'
+            'referrer_contact' => 'nullable|string|max:20',
+            'referrer_name' => 'nullable|string|max:255'
         ], [], []);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
         }
 
-        // Generate 6-digit OTP
-        $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $existingUser = User::query()->where('email', $request->email)->first();
+        if ($existingUser) {
+            $status = $existingUser->getRegistrationStatus();
 
-        // Store registration data temporarily with OTP
-        $registrationData = [
+            if ($status === 'approved') {
+                return response()->json(['message' => 'Email already exists.'], 409);
+            }
+
+            if ($status === 'pending_email_verification') {
+                $existingUser->update([
+                    'name' => $request->name,
+                    'password' => Hash::make($request->password),
+                    'role' => $request->role,
+                    'phone' => $request->phone,
+                    'barangay' => $request->barangay,
+                    'municipality' => $request->municipality,
+                    'verification_status' => 'pending',
+                    'registration_status' => 'pending_email_verification'
+                ]);
+
+                if ($request->referrer_contact) {
+                    Referral::updateOrCreate(
+                        ['new_user_id' => $existingUser->id],
+                        [
+                            'referrer_contact' => encrypt($request->referrer_contact),
+                            'referrer_name' => $request->referrer_name
+                        ]
+                    );
+                }
+
+                EmailOtp::query()
+                    ->where('email', $request->email)
+                    ->where(function ($query) use ($existingUser) {
+                        $query->where('user_id', $existingUser->id)
+                            ->orWhereNull('user_id');
+                    })->delete();
+                $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+                EmailOtp::query()->create([
+                    'user_id' => $existingUser->id,
+                    'email' => $request->email,
+                    'otp_hash' => Hash::make($otp),
+                    'expires_at' => now()->addMinutes(10)
+                ]);
+
+                try {
+                    Mail::to($request->email)->queue(new OtpMail($otp));
+                } catch (\Exception $e) {
+                    Log::error('Email sending failed: ' . $e->getMessage(), []);
+                }
+
+                return response()->json(['message' => 'Registration resumed. Please check your email for OTP.'], 200);
+            }
+
+            if ($status === 'pending_id_upload') {
+                return response()->json([
+                    'message' => 'Email already exists. Please complete your ID upload to continue registration.',
+                    'registration_status' => $status,
+                    'next_step' => 'upload_id'
+                ], 409);
+            }
+
+            if ($status === 'pending_review') {
+                return response()->json([
+                    'message' => 'Your registration is under review. You will be notified once it is approved.',
+                    'registration_status' => $status
+                ], 409);
+            }
+
+            if ($status === 'rejected') {
+                return response()->json([
+                    'message' => 'Your registration was rejected. Please contact support or try again with a different email.',
+                    'registration_status' => $status
+                ], 409);
+            }
+
+            return response()->json(['message' => 'Unable to process registration for this email.'], 409);
+        }
+
+        $user = User::query()->create([
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
@@ -56,26 +131,32 @@ class AuthController extends Controller
             'phone' => $request->phone,
             'barangay' => $request->barangay,
             'municipality' => $request->municipality,
-            'referrer_contact' => $request->referrer_contact,
-            'referrer_name' => $request->referrer_name,
-            'expires_at' => now()->addMinutes(30) // Registration expires in 30 mins
-        ];
+            'verification_status' => 'pending',
+            'registration_status' => 'pending_email_verification'
+        ]);
 
-        // Store temporary registration data
-        cache()->put("registration_{$request->email}", $registrationData, now()->addMinutes(30));
+        if ($request->referrer_contact) {
+            Referral::updateOrCreate(
+                ['new_user_id' => $user->id],
+                [
+                    'referrer_contact' => encrypt($request->referrer_contact),
+                    'referrer_name' => $request->referrer_name
+                ]
+            );
+        }
 
-        // Store EmailOtp (without user_id for now)
+        $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+
         EmailOtp::query()->create([
-            'email' => $request->email, // Store email instead of user_id
+            'user_id' => $user->id,
+            'email' => $request->email,
             'otp_hash' => Hash::make($otp),
             'expires_at' => now()->addMinutes(10)
         ]);
 
-        // Send email
         try {
-            Mail::to($request->email)->send(new OtpMail($otp));
+            Mail::to($request->email)->queue(new OtpMail($otp));
         } catch (\Exception $e) {
-            // Log error but continue
             Log::error('Email sending failed: ' . $e->getMessage(), []);
         }
 
@@ -93,14 +174,38 @@ class AuthController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        // Check if registration data exists
-        $registrationData = cache()->get("registration_{$request->email}");
-        if (!$registrationData) {
-            return response()->json(['message' => 'Registration expired or not found. Please register again.'], 404);
+        $user = User::query()->where('email', $request->email)->first();
+        if (!$user) {
+            return response()->json(['message' => 'Registration not found. Please register first.'], 404);
         }
 
-        // Verify OTP
-        $otpRecord = EmailOtp::query()->where('email', $request->email)
+        $status = $user->getRegistrationStatus();
+        if ($status === 'approved') {
+            return response()->json(['message' => 'This account is already approved. Please log in.'], 409);
+        }
+
+        if ($status === 'pending_id_upload') {
+            return response()->json([
+                'message' => 'Email already verified. Please upload your government ID to complete registration.',
+                'registration_status' => $status,
+                'next_step' => 'upload_id'
+            ], 409);
+        }
+
+        if ($status === 'pending_review') {
+            return response()->json(['message' => 'Your application is under review. Please wait for approval.'], 409);
+        }
+
+        if ($status === 'rejected') {
+            return response()->json(['message' => 'Your registration was rejected. Please contact support or try again with a different email.'], 409);
+        }
+
+        $otpRecord = EmailOtp::query()
+            ->where('email', $request->email)
+            ->where(function ($query) use ($user) {
+                $query->where('user_id', $user->id)
+                    ->orWhereNull('user_id');
+            })
             ->where('expires_at', '>', now())
             ->latest()
             ->first();
@@ -109,39 +214,21 @@ class AuthController extends Controller
             return response()->json(['message' => 'OTP expired or invalid. Request a new one.'], 422);
         }
 
-        // Create the user now that OTP is verified
-        $user = User::query()->create([
-            'name' => $registrationData['name'],
-            'email' => $registrationData['email'],
-            'password' => $registrationData['password'],
-            'role' => $registrationData['role'],
-            'phone' => $registrationData['phone'],
-            'barangay' => $registrationData['barangay'],
-            'municipality' => $registrationData['municipality'],
-            'verification_status' => 'pending',
-            'email_verified_at' => now()
+        $user->update([
+            'email_verified_at' => now(),
+            'registration_status' => 'pending_id_upload',
+            'verification_status' => 'pending'
         ]);
 
-        // Create referral if exists
-        if ($registrationData['referrer_contact']) {
-            Referral::query()->create([
-                'new_user_id' => $user->id,
-                'referrer_contact' => encrypt($registrationData['referrer_contact']),
-                'referrer_name' => $registrationData['referrer_name'] ?? null
-            ]);
-        }
-
-        // Clean up
         $otpRecord->delete();
-        cache()->forget("registration_{$request->email}");
 
-        // After creating the user, generate a token
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
             'message' => 'Email verified successfully. Please upload your government ID to complete registration.',
             'user_id' => $user->id,
             'token' => $token,
+            'registration_status' => 'pending_id_upload',
             'user' => [
                 'id' => $user->id,
                 'name' => $user->name,
@@ -161,13 +248,25 @@ class AuthController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        // Check if there's pending registration
-        $registrationData = cache()->get("registration_{$request->email}");
-        if (!$registrationData) {
+        $user = User::query()->where('email', $request->email)->first();
+        if (!$user) {
             return response()->json(['message' => 'Registration expired or not found. Please register again.'], 404);
         }
 
-        $latestOtp = EmailOtp::query()->where('email', $request->email)
+        $status = $user->getRegistrationStatus();
+        if ($status !== 'pending_email_verification') {
+            return response()->json([
+                'message' => 'OTP can only be resent while email verification is pending.',
+                'registration_status' => $status
+            ], 409);
+        }
+
+        $latestOtp = EmailOtp::query()
+            ->where('email', $request->email)
+            ->where(function ($query) use ($user) {
+                $query->where('user_id', $user->id)
+                    ->orWhereNull('user_id');
+            })
             ->latest()
             ->first();
 
@@ -175,21 +274,24 @@ class AuthController extends Controller
             return response()->json(['message' => 'Please wait before requesting a new OTP.'], 429);
         }
 
-        // Delete old OTPs
-        EmailOtp::query()->where('email', $request->email)->delete();
+        EmailOtp::query()
+            ->where('email', $request->email)
+            ->where(function ($query) use ($user) {
+                $query->where('user_id', $user->id)
+                    ->orWhereNull('user_id');
+            })->delete();
 
-        // Generate new OTP
         $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 
         EmailOtp::query()->create([
+            'user_id' => $user->id,
             'email' => $request->email,
             'otp_hash' => Hash::make($otp),
             'expires_at' => now()->addMinutes(10)
         ]);
 
-        // Send email
         try {
-            Mail::to($request->email)->send(new OtpMail($otp));
+            Mail::to($request->email)->queue(new OtpMail($otp));
         } catch (\Exception $e) {
             Log::error('Email sending failed: ' . $e->getMessage(), []);
         }
@@ -214,29 +316,52 @@ class AuthController extends Controller
             return response()->json(['message' => 'Invalid credentials.'], 401);
         }
 
-        if (!$user->email_verified_at) {
-            return response()->json(['message' => 'Email not verified.'], 403);
+        $status = $user->getRegistrationStatus();
+        if ($status === 'pending_email_verification') {
+            return response()->json([
+                'message' => 'Please verify your email to complete registration.',
+                'registration_status' => $status,
+                'next_step' => 'verify_email'
+            ], 403);
         }
 
-        if (!$user->document_url) {
-            return response()->json(['message' => 'ID document not uploaded. Please complete your registration.'], 403);
+        if ($status === 'pending_id_upload') {
+            return response()->json([
+                'message' => 'Please upload your government ID to complete registration.',
+                'registration_status' => $status,
+                'next_step' => 'upload_id'
+            ], 403);
         }
 
-        if ($user->verification_status !== 'approved') {
-            // TEMPORARY: Auto-approve for testing (REMOVE IN PRODUCTION!)
+        if ($status === 'pending_review') {
+            return response()->json([
+                'message' => 'Your account is awaiting approval. You will receive an update soon.',
+                'registration_status' => $status
+            ], 403);
+        }
+
+        if ($status === 'rejected') {
+            return response()->json([
+                'message' => 'Your registration was rejected. Please contact support or register with another email.',
+                'registration_status' => $status
+            ], 403);
+        }
+
+        if ($user->is_suspended) {
+            return response()->json(['message' => 'Account suspended.'], 403);
+        }
+
+        if ($status !== 'approved') {
             if (config('app.env') === 'local') {
                 $user->update([
                     'verification_status' => 'approved',
+                    'registration_status' => 'approved',
                     'verification_badge' => true
                 ]);
                 Log::info("Auto-approved user {$user->email} for testing", []);
             } else {
                 return response()->json(['message' => 'Account pending admin approval. Your ID is being reviewed.'], 403);
             }
-        }
-
-        if ($user->is_suspended) {
-            return response()->json(['message' => 'Account suspended.'], 403);
         }
 
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -249,6 +374,7 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'role' => $user->role,
+                'registration_status' => $user->registration_status ?? 'approved',
                 'verification_status' => $user->verification_status,
                 'verification_badge' => $user->verification_badge
             ]
@@ -259,8 +385,36 @@ class AuthController extends Controller
     {
         try {
             $user = $request->user();
+            $status = $user->getRegistrationStatus();
 
-            // Debug: Log user info
+            if ($status !== 'pending_id_upload') {
+                if ($status === 'pending_email_verification') {
+                    return response()->json([
+                        'message' => 'Please verify your email before uploading your ID.',
+                        'registration_status' => $status,
+                        'next_step' => 'verify_email'
+                    ], 403);
+                }
+
+                if ($status === 'pending_review') {
+                    return response()->json([
+                        'message' => 'Your application is already under review.',
+                        'registration_status' => $status
+                    ], 403);
+                }
+
+                if ($status === 'approved') {
+                    return response()->json(['message' => 'Your account is already approved.'], 409);
+                }
+
+                if ($status === 'rejected') {
+                    return response()->json([
+                        'message' => 'Your registration was rejected. Please contact support or try again with a different email.',
+                        'registration_status' => $status
+                    ], 403);
+                }
+            }
+
             Log::info('Upload ID attempt', [
                 'user_id' => $user->id,
                 'user_role' => $user->role,
@@ -269,7 +423,6 @@ class AuthController extends Controller
                 'all_files' => array_keys($request->allFiles())
             ]);
 
-            // Debug file info
             if ($request->hasFile('id_file')) {
                 Log::info('ID file info', [
                     'original_name' => $request->file('id_file')->getClientOriginalName(),
@@ -288,35 +441,39 @@ class AuthController extends Controller
                 ]);
             }
 
-            // Validation requires both ID and selfie for everyone
-            $validator = Validator::make($request->all(), [
+            $rules = [
                 'id_file' => 'required|file|mimes:jpeg,png,jpg|max:5120',
-                'selfie_file' => 'required|file|mimes:jpeg,png,jpg|max:5120'
-            ], [], []);
+            ];
+
+            if ($user->role === 'worker') {
+                $rules['selfie_file'] = 'required|file|mimes:jpeg,png,jpg|max:5120';
+            }
+
+            $validator = Validator::make($request->all(), $rules);
 
             if ($validator->fails()) {
                 return response()->json($validator->errors(), 422);
             }
 
-            // Upload government ID
             $idFile = $request->file('id_file');
             $idPath = 'ids/' . $user->id . '_id_' . time() . '.' . $idFile->extension();
             $idUrl = $this->supabaseStorageService->upload($idFile, $idPath);
 
-            // Upload selfie
-            $selfieFile = $request->file('selfie_file');
-            $selfiePath = 'selfies/' . $user->id . '_selfie_' . time() . '.' . $selfieFile->extension();
-            $selfieUrl = $this->supabaseStorageService->upload($selfieFile, $selfiePath);
-
             $updateData = [
                 'document_url' => $idUrl,
-                'selfie_url' => $selfieUrl,
-                'verification_status' => 'pending'
+                'verification_status' => 'pending',
+                'registration_status' => 'pending_review'
             ];
+
+            if ($request->hasFile('selfie_file')) {
+                $selfieFile = $request->file('selfie_file');
+                $selfiePath = 'selfies/' . $user->id . '_selfie_' . time() . '.' . $selfieFile->extension();
+                $updateData['selfie_url'] = $this->supabaseStorageService->upload($selfieFile, $selfiePath);
+            }
 
             $user->update($updateData);
 
-            return response()->json(['message' => 'ID and selfie uploaded. Account is pending admin approval.']);
+            return response()->json(['message' => 'ID and selfie uploaded. Account is pending admin approval.', 'registration_status' => 'pending_review']);
 
         } catch (\Exception $e) {
             Log::error('Upload ID Error', [

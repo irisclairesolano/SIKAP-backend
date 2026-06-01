@@ -25,10 +25,27 @@ class AdminVerificationController extends Controller
             return response()->json(['message' => 'Access denied.'], 403);
         }
 
-        $status = $request->get('status', 'pending');
+        $status = $request->get('status', 'pending_review');
 
         $users = User::query()->where('role', '!=', 'admin')
-            ->where('verification_status', $status)
+            ->where(function ($query) use ($status) {
+                $query->where('registration_status', $status);
+
+                if ($status === 'approved') {
+                    $query->orWhere(function ($sub) {
+                        $sub->whereNull('registration_status')
+                            ->where('verification_status', 'approved');
+                    });
+                }
+
+                if ($status === 'pending_review') {
+                    $query->orWhere(function ($sub) {
+                        $sub->whereNull('registration_status')
+                            ->where('verification_status', 'pending')
+                            ->whereNotNull('document_url');
+                    });
+                }
+            })
             ->whereNotNull('document_url')
             ->paginate(15);
 
@@ -53,18 +70,26 @@ class AdminVerificationController extends Controller
 
         $targetUser = User::findOrFail($id);
 
-        $targetUser->update(['verification_status' => $request->status]);
+        $registrationStatus = $request->status === 'approved'
+            ? 'approved'
+            : ($request->status === 'rejected' ? 'rejected' : 'pending_id_upload');
+
+        $verificationStatus = $request->status === 'approved' ? 'approved' : ($request->status === 'rejected' ? 'rejected' : 'pending');
+
+        $targetUser->update([
+            'verification_status' => $verificationStatus,
+            'registration_status' => $registrationStatus,
+            'verification_badge' => $request->status === 'approved'
+        ]);
 
         if ($request->status === 'approved') {
-            $targetUser->update(['verification_badge' => true]);
             $message = "SIKAP: Your account has been approved! You can now use the platform.";
         } elseif ($request->status === 'rejected') {
             $message = "SIKAP: Your ID submission was rejected. Please upload a clearer copy.";
-        } else { // correction_needed
+        } else {
             $message = "SIKAP: Your ID needs correction. Please re-upload in the app.";
         }
 
-        // SMS to user
         $this->semaphoreService->send((string)$targetUser->phone, (string)$message, null);
 
         return response()->json(['message' => 'User verification status updated.']);
