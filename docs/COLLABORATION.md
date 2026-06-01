@@ -251,6 +251,13 @@ APP_DEBUG=false
 - `POST /auth/upload-id` - Upload government ID
 - `POST /auth/logout` - User logout
 
+#### Registration Status Behavior
+- `pending_email_verification` — user must verify OTP
+- `pending_id_upload` — user must upload ID documents
+- `pending_review` — user is waiting for admin approval
+- `approved` — user may log in normally
+- `rejected` — user receives a rejection notice and next step guidance
+
 #### Jobs
 - `GET /jobs` - List jobs (public)
 - `GET /jobs/{id}` - Get job details
