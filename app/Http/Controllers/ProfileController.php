@@ -143,6 +143,36 @@ class ProfileController extends Controller
         return response()->json(['message' => 'Experience added successfully.', 'experience' => $experience], 201);
     }
 
+    public function updateExperience(Request $request, int $id)
+    {
+        $user = $request->user();
+
+        if ($user->role !== 'worker') {
+            return response()->json(['message' => 'Only workers can update experiences.'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'job_title' => 'required|string',
+            'employer_name' => 'nullable|string',
+            'duration' => 'nullable|string',
+            'description' => 'nullable|string'
+        ], [], []);
+
+        if ($validator->fails()) {
+            return response()->json($validator->errors(), 422);
+        }
+
+        $experience = WorkerExperience::query()->find($id);
+
+        if (!$experience || $experience->workerProfile->user_id !== $user->id) {
+            return response()->json(['message' => 'Experience not found.'], 404);
+        }
+
+        $experience->update($request->all());
+
+        return response()->json(['message' => 'Experience updated successfully.', 'experience' => $experience]);
+    }
+
     public function removeExperience(Request $request, int $id)
     {
         $user = $request->user();

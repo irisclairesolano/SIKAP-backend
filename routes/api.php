@@ -43,8 +43,10 @@ Route::prefix('v1')->group(function () {
         Route::put   ('profile',                    [ProfileController::class, 'update']);
         Route::post  ('profile/avatar',             [ProfileController::class, 'uploadAvatar']);
         Route::get   ('notifications',              [ProfileController::class, 'notifications']);
+        Route::post  ('skills',                     [\App\Http\Controllers\SkillController::class, 'store']);
         Route::post  ('profile/skills',             [ProfileController::class, 'syncSkills']);
         Route::post  ('profile/experiences',        [ProfileController::class, 'addExperience']);
+        Route::put   ('profile/experiences/{id}',   [ProfileController::class, 'updateExperience']);
         Route::delete('profile/experiences/{id}',   [ProfileController::class, 'removeExperience']);
         Route::post  ('profile/references',         [ProfileController::class, 'addReference']);
         Route::delete('profile/references/{id}',    [ProfileController::class, 'removeReference']);
