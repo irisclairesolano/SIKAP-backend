@@ -48,16 +48,22 @@ class ProfileController extends Controller
     {
         $user = $request->user();
 
-        $preferencesRules = [
+        $userUpdateRules = [
             'push_notifications' => 'nullable|boolean',
             'location_services' => 'nullable|boolean',
+            'barangay' => 'nullable|string',
+            'municipality' => 'nullable|string',
         ];
+
+        if ($user->verification_status !== 'approved') {
+            $userUpdateRules['name'] = 'nullable|string|max:255';
+        }
 
         if ($user->role === 'worker') {
             $validator = Validator::make($request->all(), array_merge([
                 'bio' => 'nullable|string',
                 'availability_status' => 'nullable|in:available,unavailable'
-            ], $preferencesRules), [], []);
+            ], $userUpdateRules), [], []);
 
             if ($validator->fails()) {
                 return response()->json($validator->errors(), 422);
@@ -78,16 +84,37 @@ class ProfileController extends Controller
             $profile = $user->employerProfile ?? $user->employerProfile()->create();
             $profile->update($request->only(['description', 'contact_info']));
         } else {
-            $validator = Validator::make($request->all(), $preferencesRules, [], []);
+            $validator = Validator::make($request->all(), $userUpdateRules, [], []);
 
             if ($validator->fails()) {
                 return response()->json($validator->errors(), 422);
             }
         }
 
-        $user->update($request->only(array_keys($preferencesRules)));
+        $user->update($request->only(array_keys($userUpdateRules)));
 
         return response()->json(['message' => 'Profile updated successfully.']);
+    }
+
+    public function uploadAvatar(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'avatar' => 'required|image|max:10240', // 10MB limit
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json($validator->errors(), 422);
+        }
+
+        $user = $request->user();
+
+        if ($request->hasFile('avatar')) {
+            $path = $request->file('avatar')->store('avatars', 'public');
+            $user->update(['avatar_url' => '/storage/' . $path]);
+            return response()->json(['message' => 'Avatar uploaded successfully.', 'avatar_url' => $user->avatar_url], 200);
+        }
+
+        return response()->json(['message' => 'No file uploaded.'], 400);
     }
 
     public function addExperience(Request $request)

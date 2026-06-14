@@ -39,9 +39,9 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/upload-id', [AuthController::class, 'uploadId']);
         Route::post('auth/logout',    [AuthController::class, 'logout']);
 
-        // Profile
         Route::get   ('profile',                    [ProfileController::class, 'show']);
         Route::put   ('profile',                    [ProfileController::class, 'update']);
+        Route::post  ('profile/avatar',             [ProfileController::class, 'uploadAvatar']);
         Route::get   ('notifications',              [ProfileController::class, 'notifications']);
         Route::post  ('profile/skills',             [ProfileController::class, 'syncSkills']);
         Route::post  ('profile/experiences',        [ProfileController::class, 'addExperience']);
