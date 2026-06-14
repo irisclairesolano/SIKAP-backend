@@ -9,7 +9,7 @@ class Report extends Model
 {
     use HasFactory;
 
-    protected $connection = 'pgsql';
+    
 
     protected $fillable = [
         'reporter_id',

@@ -4,12 +4,14 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 
 class EnsureRegistrationStatus
 {
     public function handle(Request $request, Closure $next)
     {
+        /** @var User|null $user */
         $user = Auth::user();
         if (!$user) {
             abort(401, 'Unauthenticated.');
@@ -27,16 +29,27 @@ class EnsureRegistrationStatus
         $path = $request->path();
         $allowedUploadPath = 'v1/auth/upload-id';
         $allowedLogoutPath = 'v1/auth/logout';
+        $allowedEmailUpdatePath = 'api/v1/auth/email';
+        $allowedEmailUpdatePathAlt = 'v1/auth/email';
 
-        if ($status === 'pending_id_upload' && $path === $allowedUploadPath) {
+        $isGetProfile = $request->isMethod('get') && ($path === 'v1/profile' || $path === 'api/v1/profile');
+
+        if ($isGetProfile) {
             return $next($request);
         }
 
-        if ($path === $allowedLogoutPath) {
+        if ($status === 'pending_id_upload' && ($path === $allowedUploadPath || $path === 'api/' . $allowedUploadPath)) {
+            return $next($request);
+        }
+
+        if ($path === $allowedLogoutPath || $path === 'api/' . $allowedLogoutPath) {
             return $next($request);
         }
 
         if ($status === 'pending_email_verification') {
+            if ($path === $allowedEmailUpdatePath || $path === $allowedEmailUpdatePathAlt) {
+                return $next($request);
+            }
             return response()->json([
                 'message' => 'Please verify your email to continue registration.',
                 'registration_status' => $status,

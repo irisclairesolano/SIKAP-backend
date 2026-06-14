@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Barangay extends Model
 {
-    protected $connection = 'pgsql';
+    
     protected $table = 'barangays';
     public $timestamps = true;
 

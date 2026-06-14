@@ -23,15 +23,41 @@ class ProfileController extends Controller
         return response()->json($user);
     }
 
+    public function notifications(Request $request)
+    {
+        $user = $request->user();
+
+        $notifications = $user->notifications()->orderByDesc('created_at')->paginate(20);
+        $notifications->getCollection()->transform(function ($notification) {
+            return [
+                'id' => $notification->id,
+                'type' => class_basename($notification->type),
+                'data' => $notification->data,
+                'read_at' => $notification->read_at,
+                'created_at' => $notification->created_at,
+            ];
+        });
+
+        return response()->json([
+            'unread_count' => $user->unreadNotifications()->count(),
+            'notifications' => $notifications,
+        ]);
+    }
+
     public function update(Request $request)
     {
         $user = $request->user();
 
+        $preferencesRules = [
+            'push_notifications' => 'nullable|boolean',
+            'location_services' => 'nullable|boolean',
+        ];
+
         if ($user->role === 'worker') {
-            $validator = Validator::make($request->all(), [
+            $validator = Validator::make($request->all(), array_merge([
                 'bio' => 'nullable|string',
                 'availability_status' => 'nullable|in:available,unavailable'
-            ], [], []);
+            ], $preferencesRules), [], []);
 
             if ($validator->fails()) {
                 return response()->json($validator->errors(), 422);
@@ -39,12 +65,11 @@ class ProfileController extends Controller
 
             $profile = $user->workerProfile ?? $user->workerProfile()->create();
             $profile->update($request->only(['bio', 'availability_status']));
-
         } elseif ($user->role === 'employer') {
-            $validator = Validator::make($request->all(), [
+            $validator = Validator::make($request->all(), array_merge([
                 'description' => 'nullable|string',
                 'contact_info' => 'nullable|string'
-            ], [], []);
+            ], $preferencesRules), [], []);
 
             if ($validator->fails()) {
                 return response()->json($validator->errors(), 422);
@@ -52,7 +77,15 @@ class ProfileController extends Controller
 
             $profile = $user->employerProfile ?? $user->employerProfile()->create();
             $profile->update($request->only(['description', 'contact_info']));
+        } else {
+            $validator = Validator::make($request->all(), $preferencesRules, [], []);
+
+            if ($validator->fails()) {
+                return response()->json($validator->errors(), 422);
+            }
         }
+
+        $user->update($request->only(array_keys($preferencesRules)));
 
         return response()->json(['message' => 'Profile updated successfully.']);
     }

@@ -11,12 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('email_otps', function (Blueprint $table) {
-            $table->string('email')->nullable()->after('id');
-            $table->index('email');
-            // Make user_id nullable to support pending registrations
-            $table->unsignedBigInteger('user_id')->nullable()->change();
-        });
+        // Email and user_id nullable columns are now created in 2026_05_03_100000_create_email_otps_table
+        // This migration is kept for historical reference but does nothing
     }
 
     /**
@@ -24,11 +20,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('email_otps', function (Blueprint $table) {
-            $table->dropIndex(['email']);
-            $table->dropColumn('email');
-            // Revert user_id to not nullable
-            $table->unsignedBigInteger('user_id')->nullable(false)->change();
-        });
+        // No-op since this migration does nothing
     }
 };

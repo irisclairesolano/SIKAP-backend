@@ -221,10 +221,52 @@ Authorization: Bearer {token}
   "verification_badge": true,
   "document_url": "https://storage.example.com/ids/123_1234567890.jpg",
   "selfie_url": "https://storage.example.com/selfies/123_selfie_1234567890.jpg",
+  "push_notifications": false,
+  "location_services": true,
   "worker_profile": {
     "skills": ["Construction", "Painting"],
     "experiences": [...],
     "references": [...]
+  }
+}
+```
+
+### Get Notifications
+```http
+GET /api/v1/notifications
+Authorization: Bearer {token}
+```
+
+**Response (200):**
+```json
+{
+  "unread_count": 3,
+  "notifications": {
+    "current_page": 1,
+    "data": [
+      {
+        "id": "4f3e2a1b-...",
+        "type": "JobAssignedNotification",
+        "data": {
+          "job_title": "Construction Worker Needed",
+          "application_id": 456
+        },
+        "read_at": null,
+        "created_at": "2026-06-10T12:45:00.000000Z"
+      },
+      {
+        "id": "7a1b2c3d-...",
+        "type": "ApplicationStatusNotification",
+        "data": {
+          "status": "confirmed"
+        },
+        "read_at": "2026-06-10T13:00:00.000000Z",
+        "created_at": "2026-06-10T12:50:00.000000Z"
+      }
+    ],
+    "last_page": 1,
+    "per_page": 20,
+    "total": 2
   }
 }
 ```
@@ -239,7 +281,9 @@ Content-Type: application/json
   "name": "John Updated",
   "phone": "09123456789",
   "barangay": "Abuyog",
-  "municipality": "Sorsogon City"
+  "municipality": "Sorsogon City",
+  "push_notifications": true,
+  "location_services": false
 }
 ```
 
@@ -382,6 +426,42 @@ Content-Type: application/json
 ```http
 PATCH /api/v1/applications/{id}/confirm
 Authorization: Bearer {token}
+```
+
+---
+
+## ⭐ REVIEWS (Authentication Required)
+
+### Get Reviews and Reputation
+```http
+GET /api/v1/reviews
+Authorization: Bearer {token}
+```
+
+**Response (200):**
+```json
+{
+  "reputation_score": 4.75,
+  "reviews_count": 12,
+  "reviews": [
+    {
+      "id": 789,
+      "reviewer": {
+        "id": 21,
+        "name": "Employer Name",
+        "role": "employer",
+        "email": "employer@example.com"
+      },
+      "reviewer_role": "employer",
+      "cat1": 5,
+      "cat2": 5,
+      "cat3": 4,
+      "cat4": 5,
+      "overall_rating": 4.75,
+      "comment": "Great worker, punctual and reliable."
+    }
+  ]
+}
 ```
 
 ---

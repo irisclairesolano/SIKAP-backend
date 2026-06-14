@@ -17,6 +17,39 @@ class ReviewController extends Controller
         $this->reputationService = $reputationService;
     }
 
+    public function index(Request $request)
+    {
+        $user = $request->user();
+
+        $reviews = Review::with(['reviewer:id,name,email,role'])
+            ->where('reviewee_id', $user->id)
+            ->orderByDesc('id')
+            ->get();
+
+        return response()->json([
+            'reputation_score' => round($reviews->avg('overall_rating') ?? 0, 2),
+            'reviews_count' => $reviews->count(),
+            'reviews' => $reviews->map(function (Review $review) {
+                return [
+                    'id' => $review->id,
+                    'reviewer' => [
+                        'id' => $review->reviewer->id,
+                        'name' => $review->reviewer->name,
+                        'role' => $review->reviewer->role,
+                        'email' => $review->reviewer->email,
+                    ],
+                    'reviewer_role' => $review->reviewer_role,
+                    'cat1' => $review->cat1,
+                    'cat2' => $review->cat2,
+                    'cat3' => $review->cat3,
+                    'cat4' => $review->cat4,
+                    'overall_rating' => $review->overall_rating,
+                    'comment' => $review->comment,
+                ];
+            }),
+        ]);
+    }
+
     public function store(Request $request, int $applicationId)
     {
         $user = $request->user();
