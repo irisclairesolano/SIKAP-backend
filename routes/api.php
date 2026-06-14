@@ -20,13 +20,18 @@ Route::prefix('v1')->group(function () {
     Route::post('auth/register',   [AuthController::class, 'register']);
     Route::post('auth/verify-otp', [AuthController::class, 'verifyOtp']);
     Route::post('auth/resend-otp', [AuthController::class, 'resendOtp']);
+    Route::patch('auth/email',     [AuthController::class, 'updateEmail']);
     Route::post('auth/login',      [AuthController::class, 'login']);
+    Route::post('auth/status',      [\App\Http\Controllers\Auth\StatusController::class, 'show']);
 
     // Location dropdowns — public, no auth required
     Route::prefix('locations')->group(function () {
         Route::get('municipalities', [LocationController::class, 'municipalities']);
         Route::get('barangays', [LocationController::class, 'barangays']);
     });
+
+    // Skills
+    Route::get('skills', [\App\Http\Controllers\SkillController::class, 'index']);
 
     // Authenticated
     Route::middleware(['auth:sanctum', 'registration_status'])->group(function () {
@@ -37,6 +42,7 @@ Route::prefix('v1')->group(function () {
         // Profile
         Route::get   ('profile',                    [ProfileController::class, 'show']);
         Route::put   ('profile',                    [ProfileController::class, 'update']);
+        Route::get   ('notifications',              [ProfileController::class, 'notifications']);
         Route::post  ('profile/skills',             [ProfileController::class, 'syncSkills']);
         Route::post  ('profile/experiences',        [ProfileController::class, 'addExperience']);
         Route::delete('profile/experiences/{id}',   [ProfileController::class, 'removeExperience']);
@@ -74,6 +80,7 @@ Route::prefix('v1')->group(function () {
         });
 
         // Reviews & Reports (any authenticated role)
+        Route::get ('reviews',                  [ReviewController::class, 'index']);
         Route::post('applications/{id}/review', [ReviewController::class, 'store']);
         Route::post('reports',                  [ReportController::class, 'store']);
 

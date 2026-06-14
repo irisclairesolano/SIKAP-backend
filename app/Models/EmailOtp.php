@@ -9,7 +9,7 @@ class EmailOtp extends Model
 {
     use HasFactory;
 
-    protected $connection = 'pgsql';
+    
 
     protected $fillable = [
         'user_id',

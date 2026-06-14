@@ -29,6 +29,10 @@ class AuthController extends Controller
 
     public function register(Request $request)
     {
+        if ($request->has('email')) {
+            $request->merge(['email' => strtolower($request->email)]);
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|email',
@@ -220,7 +224,7 @@ class AuthController extends Controller
             'verification_status' => 'pending'
         ]);
 
-        $otpRecord->delete();
+        EmailOtp::destroy($otpRecord->id);
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
@@ -299,8 +303,123 @@ class AuthController extends Controller
         return response()->json(['message' => 'OTP resent.']);
     }
 
+    public function updateEmail(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'current_email' => 'required|email',
+            'new_email' => 'required|email'
+        ], [], []);
+
+        if ($validator->fails()) {
+            return response()->json($validator->errors(), 422);
+        }
+
+        $user = User::query()->where('email', $request->current_email)->first();
+        if (!$user) {
+            return response()->json(['message' => 'User not found.'], 404);
+        }
+
+        if ($user->getRegistrationStatus() !== 'pending_email_verification') {
+            return response()->json(['message' => 'Email can only be updated during the email verification step.'], 403);
+        }
+
+        if (strtolower($user->email) === strtolower($request->new_email)) {
+            return response()->json(['message' => 'The new email address must be different from your current email.'], 422);
+        }
+
+        $existingUser = User::query()->where('email', $request->new_email)->first();
+        if ($existingUser && $existingUser->id !== $user->id) {
+            return response()->json(['message' => 'Email already in use. Please choose a different email.'], 409);
+        }
+
+        $user->update([
+            'email' => $request->new_email,
+            'email_verified_at' => null,
+            'verification_status' => 'pending',
+            'registration_status' => 'pending_email_verification'
+        ]);
+
+        EmailOtp::query()
+            ->where('user_id', $user->id)
+            ->delete();
+
+        $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        EmailOtp::query()->create([
+            'user_id' => $user->id,
+            'email' => $request->new_email,
+            'otp_hash' => Hash::make($otp),
+            'expires_at' => now()->addMinutes(10)
+        ]);
+
+        try {
+            Mail::to($request->email)->queue(new OtpMail($otp));
+        } catch (\Exception $e) {
+            Log::error('Email sending failed: ' . $e->getMessage(), []);
+        }
+
+        return response()->json(['message' => 'Email updated. A verification OTP has been sent to your new email address.']);
+    }
+
+    public function status(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email'
+        ], [], []);
+
+        if ($validator->fails()) {
+            return response()->json($validator->errors(), 422);
+        }
+
+        $user = User::query()->where('email', $request->email)->first();
+        if (!$user) {
+            return response()->json(['message' => 'User not found. Please register first.'], 404);
+        }
+
+        $status = $user->getRegistrationStatus();
+        $payload = [
+            'registration_status' => $status,
+            'message' => '',
+            'next_step' => null,
+            'user_id' => $user->id,
+            'email' => $user->email
+        ];
+
+        switch ($status) {
+            case 'pending_email_verification':
+                $payload['message'] = 'Please verify your email to continue registration.';
+                $payload['next_step'] = 'verify_email';
+                break;
+            case 'pending_id_upload':
+                $payload['message'] = 'Email verified. Please upload your government ID to complete registration.';
+                $payload['next_step'] = 'upload_id';
+                break;
+            case 'pending_review':
+                $payload['message'] = 'Your account is under review. Please wait for admin approval.';
+                $payload['next_step'] = 'wait_for_review';
+                break;
+            case 'approved':
+                $payload['message'] = 'Your account is approved.';
+                $payload['next_step'] = 'complete';
+                break;
+            case 'rejected':
+                $payload['message'] = 'Your registration was rejected. Please contact support or register again.';
+                $payload['next_step'] = 'contact_support';
+                break;
+            default:
+                $payload['message'] = 'Registration status unknown.';
+                $payload['next_step'] = 'contact_support';
+                break;
+        }
+
+        return response()->json($payload);
+    }
+
     public function login(Request $request)
     {
+        if ($request->has('email')) {
+            $request->merge(['email' => strtolower($request->email)]);
+        }
+
         $validator = Validator::make($request->all(), [
             'email' => 'required|string|email',
             'password' => 'required|string'
@@ -317,6 +436,18 @@ class AuthController extends Controller
         }
 
         $status = $user->getRegistrationStatus();
+        if ($status !== 'approved') {
+            if (config('app.env') === 'local') {
+                $user->update([
+                    'verification_status' => 'approved',
+                    'registration_status' => 'approved',
+                    'verification_badge' => true
+                ]);
+                Log::info("Auto-approved user {$user->email} for testing", []);
+                $status = 'approved';
+            }
+        }
+
         if ($status === 'pending_email_verification') {
             return response()->json([
                 'message' => 'Please verify your email to complete registration.',
@@ -349,19 +480,6 @@ class AuthController extends Controller
 
         if ($user->is_suspended) {
             return response()->json(['message' => 'Account suspended.'], 403);
-        }
-
-        if ($status !== 'approved') {
-            if (config('app.env') === 'local') {
-                $user->update([
-                    'verification_status' => 'approved',
-                    'registration_status' => 'approved',
-                    'verification_badge' => true
-                ]);
-                Log::info("Auto-approved user {$user->email} for testing", []);
-            } else {
-                return response()->json(['message' => 'Account pending admin approval. Your ID is being reviewed.'], 403);
-            }
         }
 
         $token = $user->createToken('auth_token')->plainTextToken;

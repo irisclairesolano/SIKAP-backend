@@ -10,7 +10,7 @@ class JobPost extends Model
 {
     use HasFactory, SoftDeletes;
 
-    protected $connection = 'pgsql';
+    
 
     protected $fillable = [
         'employer_id',

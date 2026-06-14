@@ -26,9 +26,15 @@ class ApplicationController extends Controller
             return response()->json(['message' => 'Only workers can view applications.'], 403);
         }
 
-        $applications = Application::query()->with('job.employer')
-            ->where('worker_id', $user->id)
-            ->paginate(15);
+        $query = Application::query()->with('job.employer')
+            ->where('worker_id', $user->id);
+
+        if ($request->has('status')) {
+            $statuses = explode(',', $request->query('status'));
+            $query->whereIn('status', $statuses);
+        }
+
+        $applications = $query->latest()->paginate(15);
 
         return response()->json($applications);
     }

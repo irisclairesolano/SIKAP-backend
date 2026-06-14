@@ -9,7 +9,7 @@ class Application extends Model
 {
     use HasFactory;
 
-    protected $connection = 'pgsql';
+    
 
     protected $fillable = [
         'job_post_id',

@@ -9,7 +9,7 @@ class Review extends Model
 {
     use HasFactory;
 
-    protected $connection = 'pgsql';
+    
 
     public $timestamps = false;
 

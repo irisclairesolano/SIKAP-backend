@@ -9,7 +9,7 @@ class WorkerCharacterReference extends Model
 {
     use HasFactory;
 
-    protected $connection = 'pgsql';
+    
 
     protected $fillable = [
         'worker_profile_id',
